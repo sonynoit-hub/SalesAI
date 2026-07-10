@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui";
 import { workflowSteps } from "@/lib/navigation";
+import { MAX_TARGET_COMPANY_COUNT } from "@/lib/search-analysis/constants";
 import type {
   CompanyDatabaseStatus,
   OpportunityResult,
@@ -62,6 +63,8 @@ export default function LeadSearchPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [savingResultId, setSavingResultId] = useState<string | null>(null);
   const [savedResultIds, setSavedResultIds] = useState<string[]>([]);
+  const [autoSaveResults, setAutoSaveResults] = useState(false);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<string | null>(null);
   const [showSeenCompanies, setShowSeenCompanies] = useState(true);
   const [showSavedCompanies, setShowSavedCompanies] = useState(true);
   const [saveReview, setSaveReview] = useState<SavedLeadReview | null>(null);
@@ -100,6 +103,7 @@ export default function LeadSearchPage() {
     setIsAnalyzing(true);
     setAnalysisElapsedSeconds(0);
     setAnalysisStatus("Searching company websites...");
+    setAutoSaveStatus(null);
     setErrorMessage(null);
 
     try {
@@ -131,6 +135,10 @@ export default function LeadSearchPage() {
       setResults(data.results);
       setAnalysisMeta(data.meta);
       setAnalysisStatus(null);
+
+      if (autoSaveResults) {
+        await autoSaveSearchResults(data.results);
+      }
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -153,67 +161,7 @@ export default function LeadSearchPage() {
     setErrorMessage(null);
 
     try {
-      const response = await fetch("/api/leads/from-search-result", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          query: referenceKeyword.trim(),
-          companyName: result.companyName,
-          websiteUrl: result.websiteUrl,
-          description: result.description,
-          source: result.source,
-          sourceUrl: result.aboutUrl ?? result.websiteUrl,
-          industry: result.industry,
-          location: result.location,
-          size: result.employees,
-          publicEmail: result.publicEmail,
-          contactFormUrl: result.contactFormUrl,
-          aiOpportunity: result.salesBrief.salesAngle,
-          whyThisMatches: [
-            result.salesBrief.businessSummary,
-            result.salesBrief.likelyNeed,
-            result.salesBrief.contactNextStep,
-            ...(result.evidence?.passed ?? []),
-          ],
-        }),
-      });
-
-      const payload = (await response.json()) as SaveLeadResponse;
-
-      if (!response.ok) {
-        throw new Error(
-          payload.error?.message ?? "Could not save this company as a lead.",
-        );
-      }
-
-      const databaseStatus: CompanyDatabaseStatus = {
-        state: "saved",
-        companyId: payload.data?.company?.id,
-        leadId: payload.data?.lead?.id,
-        lastSeenAt: new Date().toISOString(),
-        seenCount: payload.data?.company?.seenCount,
-      };
-      const companyId = payload.data?.company?.id;
-
-      setSavedResultIds((current) => [...current, result.id]);
-      setResults((current) =>
-        current.map((item) =>
-          item.id === result.id ? { ...item, databaseStatus } : item,
-        ),
-      );
-      if (companyId) {
-        setSaveReview({
-          companyId,
-          leadId: payload.data?.lead?.id,
-          companyName: payload.data?.company?.name ?? result.companyName,
-          companyUrl: payload.data?.company?.websiteUrl ?? result.websiteUrl,
-          leadStatus: payload.data?.lead?.status,
-          createdCompany: payload.data?.createdCompany,
-          createdLead: payload.data?.createdLead,
-        });
-      }
+      await saveSearchResult(result, { showReview: true });
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -222,6 +170,114 @@ export default function LeadSearchPage() {
       );
     } finally {
       setSavingResultId(null);
+    }
+  }
+
+  async function autoSaveSearchResults(searchResults: OpportunityResult[]) {
+    const saveableResults = searchResults.filter(
+      (result) =>
+        result.websiteUrl &&
+        result.databaseStatus?.state !== "saved" &&
+        !savedResultIds.includes(result.id),
+    );
+
+    if (saveableResults.length === 0) {
+      setAutoSaveStatus("No new company results needed saving.");
+      return;
+    }
+
+    setAutoSaveStatus(`Auto-saving ${saveableResults.length} company results...`);
+    setSavingResultId("auto-save");
+
+    let savedCount = 0;
+
+    try {
+      for (const result of saveableResults) {
+        try {
+          await saveSearchResult(result, { showReview: false });
+          savedCount += 1;
+        } catch (error) {
+          setErrorMessage(
+            error instanceof Error
+              ? error.message
+              : "Auto-save failed for one company result.",
+          );
+        }
+      }
+
+      setAutoSaveStatus(`Auto-saved ${savedCount} company results.`);
+    } finally {
+      setSavingResultId(null);
+    }
+  }
+
+  async function saveSearchResult(
+    result: OpportunityResult,
+    { showReview }: { showReview: boolean },
+  ) {
+    const response = await fetch("/api/leads/from-search-result", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        query: referenceKeyword.trim(),
+        companyName: result.companyName,
+        websiteUrl: result.websiteUrl,
+        description: result.description,
+        source: result.source,
+        sourceUrl: result.aboutUrl ?? result.websiteUrl,
+        industry: result.industry,
+        location: result.location,
+        size: result.employees,
+        publicEmail: result.publicEmail,
+        contactFormUrl: result.contactFormUrl,
+        aiOpportunity: result.salesBrief.salesAngle,
+        whyThisMatches: [
+          result.salesBrief.businessSummary,
+          result.salesBrief.likelyNeed,
+          result.salesBrief.contactNextStep,
+          ...(result.evidence?.passed ?? []),
+        ],
+      }),
+    });
+
+    const payload = (await response.json()) as SaveLeadResponse;
+
+    if (!response.ok) {
+      throw new Error(
+        payload.error?.message ?? "Could not save this company as a lead.",
+      );
+    }
+
+    const databaseStatus: CompanyDatabaseStatus = {
+      state: "saved",
+      companyId: payload.data?.company?.id,
+      leadId: payload.data?.lead?.id,
+      lastSeenAt: new Date().toISOString(),
+      seenCount: payload.data?.company?.seenCount,
+    };
+    const companyId = payload.data?.company?.id;
+
+    setSavedResultIds((current) =>
+      current.includes(result.id) ? current : [...current, result.id],
+    );
+    setResults((current) =>
+      current.map((item) =>
+        item.id === result.id ? { ...item, databaseStatus } : item,
+      ),
+    );
+
+    if (showReview && companyId) {
+      setSaveReview({
+        companyId,
+        leadId: payload.data?.lead?.id,
+        companyName: payload.data?.company?.name ?? result.companyName,
+        companyUrl: payload.data?.company?.websiteUrl ?? result.websiteUrl,
+        leadStatus: payload.data?.lead?.status,
+        createdCompany: payload.data?.createdCompany,
+        createdLead: payload.data?.createdLead,
+      });
     }
   }
 
@@ -332,29 +388,53 @@ export default function LeadSearchPage() {
 
             <label className="block text-sm">
               <span className="font-semibold text-slate-800">Target companies</span>
-              <select
+              <input
                 className="mt-2 h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 outline-none"
-                onChange={(event) => setResultLimit(Number(event.currentTarget.value))}
+                max={MAX_TARGET_COMPANY_COUNT}
+                min={1}
+                onChange={(event) =>
+                  setResultLimit(
+                    Math.max(
+                      1,
+                      Math.min(
+                        MAX_TARGET_COMPANY_COUNT,
+                        Number(event.currentTarget.value) || 1,
+                      ),
+                    ),
+                  )
+                }
+                placeholder={`1-${MAX_TARGET_COMPANY_COUNT}`}
+                step={1}
+                type="number"
                 value={resultLimit}
-              >
-                {[3, 5, 10, 15, 20].map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
+              />
+              <p className="mt-2 text-xs text-slate-500">
+                Larger searches can take longer. Current max: {MAX_TARGET_COMPANY_COUNT}.
+              </p>
             </label>
 
             <div className="pt-7">
               <button
                 className="h-11 w-full rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                disabled={isAnalyzing}
+                disabled={isAnalyzing || savingResultId === "auto-save"}
                 type="submit"
               >
                 {isAnalyzing ? "Searching..." : "Search Companies"}
               </button>
+              <label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-600">
+                <input
+                  checked={autoSaveResults}
+                  className="mt-1"
+                  disabled={isAnalyzing || savingResultId === "auto-save"}
+                  onChange={(event) => setAutoSaveResults(event.currentTarget.checked)}
+                  type="checkbox"
+                />
+                <span>Auto-save new search results to CRM</span>
+              </label>
               <p className="mx-auto mt-3 max-w-44 text-center text-xs leading-5 text-slate-500">
-                {isAnalyzing
+                {savingResultId === "auto-save"
+                  ? autoSaveStatus ?? "Auto-saving results..."
+                  : isAnalyzing
                   ? `${analysisStatus ?? "Working..."} ${analysisElapsedSeconds}s`
                   : analysisStatus ??
                     "Search will keep company pages and filter non-company junk"}

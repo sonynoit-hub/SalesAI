@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
-import { applyDatabaseStatuses } from "@/lib/search-analysis/store";
+import { MAX_TARGET_COMPANY_COUNT } from "@/lib/search-analysis/constants";
 import type { SearchAnalyzeRequest } from "@/lib/search-analysis/schemas";
+import { applyDatabaseStatuses } from "@/lib/search-analysis/store";
 import { searchSearxng, type SearxngResult } from "@/lib/search-analysis/search";
 import type {
   OpportunityResult,
@@ -97,8 +98,10 @@ const BLOCKED_HOST_SUFFIXES = [
 ];
 
 const STRICT_SEARCH_BATCH_SIZE = 2;
+const STRICT_LOOKUP_BATCH_SIZE = 4;
 const HOMEPAGE_VERIFY_TIMEOUT_MS = 3_500;
 const CONTACT_PAGE_VERIFY_LIMIT = 8;
+const HOMEPAGE_ENRICH_CONCURRENCY = 6;
 
 export async function runStrictPublicCompanySearch(
   request: SearchAnalyzeRequest,
@@ -106,17 +109,23 @@ export async function runStrictPublicCompanySearch(
   const startedAt = Date.now();
   const searchPlan = buildStrictSearchPlan(request);
   const searchQueries = buildStrictSearchQueries(request);
-  const settled = await searchQueriesInBatches(searchQueries);
+  const settled = await searchQueriesInBatches(searchQueries, STRICT_SEARCH_BATCH_SIZE);
   const failed = settled.filter((result) => result.status === "rejected");
   const firstPassResults = settled.flatMap((result) =>
     result.status === "fulfilled" ? result.value : [],
   );
   const seedNames = extractCompanySeedNames(firstPassResults).slice(
     0,
-    Math.max(6, request.resultLimit * 3),
+    Math.min(MAX_TARGET_COMPANY_COUNT * 2, Math.max(12, request.resultLimit * 2)),
   );
-  const officialLookupQueries = buildOfficialLookupQueries(seedNames);
-  const lookupSettled = await searchQueriesInBatches(officialLookupQueries);
+  const officialLookupQueries = buildOfficialLookupQueries(seedNames).slice(
+    0,
+    officialLookupQueryLimit(request.resultLimit),
+  );
+  const lookupSettled = await searchQueriesInBatches(
+    officialLookupQueries,
+    STRICT_LOOKUP_BATCH_SIZE,
+  );
   const lookupResults = lookupSettled.flatMap((result) =>
     result.status === "fulfilled" ? result.value : [],
   );
@@ -179,12 +188,15 @@ async function enrichHomepageCandidates(
   candidates: VerifiedHomepage[],
   request: SearchAnalyzeRequest,
 ) {
-  const settled = await Promise.allSettled(
-    candidates.map((candidate) => enrichHomepageCandidate(candidate, request)),
-  );
-  const enriched = settled.map((result, index) =>
-    result.status === "fulfilled" ? result.value : candidates[index],
-  );
+  const enriched = await mapWithConcurrency(candidates, HOMEPAGE_ENRICH_CONCURRENCY, async (
+    candidate,
+  ) => {
+    try {
+      return await enrichHomepageCandidate(candidate, request);
+    } catch {
+      return candidate;
+    }
+  });
   const verifiedCount = enriched.filter((candidate) =>
     candidate.evidence.passed.includes("Homepage metadata verified"),
   ).length;
@@ -376,11 +388,11 @@ export function extractHomepageVerification(
   };
 }
 
-async function searchQueriesInBatches(queries: string[]) {
+async function searchQueriesInBatches(queries: string[], batchSize: number) {
   const settled: PromiseSettledResult<SearxngResult[]>[] = [];
 
-  for (let index = 0; index < queries.length; index += STRICT_SEARCH_BATCH_SIZE) {
-    const batch = queries.slice(index, index + STRICT_SEARCH_BATCH_SIZE);
+  for (let index = 0; index < queries.length; index += batchSize) {
+    const batch = queries.slice(index, index + batchSize);
     const batchSettled = await Promise.allSettled(
       batch.map((query) => searchSearxng(query)),
     );
@@ -555,6 +567,34 @@ function buildOfficialLookupQueries(candidateNames: string[]) {
     `"${name}" 公式サイト`,
     `"${name}" 会社概要`,
   ]);
+}
+
+function officialLookupQueryLimit(resultLimit: number) {
+  return Math.min(MAX_TARGET_COMPANY_COUNT * 3, Math.max(30, resultLimit * 3));
+}
+
+async function mapWithConcurrency<Input, Output>(
+  values: Input[],
+  concurrency: number,
+  mapper: (value: Input, index: number) => Promise<Output>,
+) {
+  const results = new Array<Output>(values.length);
+
+  for (let index = 0; index < values.length; index += concurrency) {
+    const batch = values.slice(index, index + concurrency);
+    const settled = await Promise.allSettled(
+      batch.map((value, batchIndex) => mapper(value, index + batchIndex)),
+    );
+
+    settled.forEach((result, batchIndex) => {
+      const targetIndex = index + batchIndex;
+      if (result.status === "fulfilled") {
+        results[targetIndex] = result.value;
+      }
+    });
+  }
+
+  return results.filter((value): value is Output => value !== undefined);
 }
 
 function extractCompanySeedNames(results: SearxngResult[]) {

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { SearchGoalStatus } from "@/lib/generated/prisma/client";
+import { MAX_TARGET_COMPANY_COUNT } from "@/lib/search-analysis/constants";
 import { runLeadSearchAnalysis } from "@/lib/search-analysis/pipeline";
 import { generateSearchQueryStrategy } from "@/lib/search-analysis/query-generator";
 import type { SearchAnalyzeRequest } from "@/lib/search-analysis/schemas";
@@ -167,7 +168,10 @@ function buildAttemptRequest({
             request.opportunityDescription,
             `Search attempt ${attempt}: use a different generated query group, avoid already discovered companies, and find new company candidates.`,
           ].join(" "),
-    resultLimit: Math.min(20, Math.max(remaining * 3, request.resultLimit)),
+    resultLimit: Math.min(
+      MAX_TARGET_COMPANY_COUNT,
+      Math.max(remaining * 3, request.resultLimit),
+    ),
   };
 }
 

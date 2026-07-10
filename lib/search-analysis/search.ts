@@ -4,6 +4,10 @@ import type {
   ResultEvidence,
   SearchIntent,
 } from "@/lib/search-analysis/types";
+import {
+  DEFAULT_TARGET_COMPANY_COUNT,
+  MAX_TARGET_COMPANY_COUNT,
+} from "@/lib/search-analysis/constants";
 
 export type SearxngResult = {
   title?: string;
@@ -37,8 +41,7 @@ export type SearchRefinementResult = {
   };
 };
 
-const DEFAULT_RESULT_LIMIT = 5;
-const SEARCH_PAGES_PER_QUERY = 3;
+const SEARCH_PAGES_PER_QUERY = 5;
 
 export function buildSearchQueries({
   industry,
@@ -58,12 +61,42 @@ export function buildSearchQueries({
 
 export async function searchSearxng(query: string, page = 1) {
   const baseUrl = process.env.SEARXNG_URL ?? "http://127.0.0.1:8080";
+  const preferredResults = await searchSearxngOnce({
+    baseUrl,
+    query,
+    page,
+    enabledEngines: ["google"],
+  }).catch(() => []);
+
+  const fallbackResults = await searchSearxngOnce({
+    baseUrl,
+    query,
+    page,
+  });
+
+  return dedupeSearchResults([...preferredResults, ...fallbackResults]);
+}
+
+async function searchSearxngOnce({
+  baseUrl,
+  query,
+  page,
+  enabledEngines,
+}: {
+  baseUrl: string;
+  query: string;
+  page: number;
+  enabledEngines?: string[];
+}) {
   const url = new URL("/search", baseUrl);
   url.searchParams.set("q", query);
   url.searchParams.set("format", "json");
   url.searchParams.set("language", hasJapaneseText(query) ? "ja" : "auto");
   if (page > 1) {
     url.searchParams.set("pageno", String(page));
+  }
+  if (enabledEngines?.length) {
+    url.searchParams.set("enabled_engines", enabledEngines.join(","));
   }
 
   const response = await fetch(url, {
@@ -265,7 +298,7 @@ function selectOfficialCompanyResults(
 }
 
 function normalizeResultLimit(value: number | undefined) {
-  return Math.max(1, Math.min(20, value ?? DEFAULT_RESULT_LIMIT));
+  return Math.max(1, Math.min(MAX_TARGET_COMPANY_COUNT, value ?? DEFAULT_TARGET_COMPANY_COUNT));
 }
 
 function candidateLimit(value: number | undefined) {
@@ -278,8 +311,25 @@ function refinedCandidateLimit(value: number | undefined) {
 
 function searchPageCount(value: number | undefined) {
   if (normalizeResultLimit(value) <= 5) return 1;
-  if (normalizeResultLimit(value) <= 10) return 2;
+  if (normalizeResultLimit(value) <= 15) return 2;
+  if (normalizeResultLimit(value) <= 30) return 3;
+  if (normalizeResultLimit(value) <= 60) return 4;
   return SEARCH_PAGES_PER_QUERY;
+}
+
+function dedupeSearchResults(results: SearxngResult[]) {
+  const seen = new Set<string>();
+
+  return results.filter((result) => {
+    const key = normalizeCompanyKey(result.url ?? "") || `${result.title ?? ""}|${result.content ?? ""}`;
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
 }
 
 function createUniqueCompanyFilter() {

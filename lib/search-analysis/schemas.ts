@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  DEFAULT_TARGET_COMPANY_COUNT,
+  MAX_TARGET_COMPANY_COUNT,
+} from "@/lib/search-analysis/constants";
 
 export const searchAnalyzeRequestSchema = z.object({
   referenceKeyword: z.string().trim().min(2).max(500).optional(),
@@ -10,8 +14,8 @@ export const searchAnalyzeRequestSchema = z.object({
     .max(12)
     .optional()
     .default([]),
-  targetCompanyCount: z.coerce.number().int().min(1).max(20).optional(),
-  resultLimit: z.coerce.number().int().min(1).max(20).optional(),
+  targetCompanyCount: z.coerce.number().int().min(1).max(MAX_TARGET_COMPANY_COUNT).optional(),
+  resultLimit: z.coerce.number().int().min(1).max(MAX_TARGET_COMPANY_COUNT).optional(),
 }).transform((value, context) => {
   const referenceKeyword = value.referenceKeyword ?? value.opportunityDescription;
 
@@ -24,7 +28,8 @@ export const searchAnalyzeRequestSchema = z.object({
     return z.NEVER;
   }
 
-  const targetCompanyCount = value.targetCompanyCount ?? value.resultLimit ?? 5;
+  const targetCompanyCount =
+    value.targetCompanyCount ?? value.resultLimit ?? DEFAULT_TARGET_COMPANY_COUNT;
 
   return {
     referenceKeyword,

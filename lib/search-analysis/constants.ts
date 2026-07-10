@@ -1,0 +1,2 @@
+export const DEFAULT_TARGET_COMPANY_COUNT = 5;
+export const MAX_TARGET_COMPANY_COUNT = 100;
