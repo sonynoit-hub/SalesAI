@@ -1,0 +1,383 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum CompanySource {
+  SEARCH @map("search")
+  MANUAL @map("manual")
+  IMPORT @map("import")
+
+  @@map("company_source")
+}
+
+enum SearchSource {
+  SEARXNG   @map("searxng")
+  MANUAL    @map("manual")
+  SNS       @map("sns")
+  DIRECTORY @map("directory")
+
+  @@map("search_source")
+}
+
+enum LeadStatus {
+  NEW        @map("new")
+  RESEARCHED @map("researched")
+  QUALIFIED  @map("qualified")
+  CONTACTED  @map("contacted")
+  REPLIED    @map("replied")
+  FOLLOW_UP  @map("follow_up")
+  MEETING    @map("meeting")
+  WON        @map("won")
+  LOST       @map("lost")
+
+  @@map("lead_status")
+}
+
+enum LeadPriority {
+  LOW    @map("low")
+  MEDIUM @map("medium")
+  HIGH   @map("high")
+
+  @@map("lead_priority")
+}
+
+enum EmailTone {
+  FRIENDLY     @map("friendly")
+  PROFESSIONAL @map("professional")
+  DIRECT       @map("direct")
+
+  @@map("email_tone")
+}
+
+enum EmailLanguage {
+  EN @map("en")
+  JA @map("ja")
+
+  @@map("email_language")
+}
+
+enum EmailDraftStatus {
+  DRAFT     @map("draft")
+  APPROVED  @map("approved")
+  SENT      @map("sent")
+  DISCARDED @map("discarded")
+
+  @@map("email_draft_status")
+}
+
+enum SentEmailStatus {
+  SENT   @map("sent")
+  FAILED @map("failed")
+
+  @@map("sent_email_status")
+}
+
+enum FollowUpStatus {
+  OPEN    @map("open")
+  DONE    @map("done")
+  SKIPPED @map("skipped")
+
+  @@map("follow_up_status")
+}
+
+enum SearchCandidateStatus {
+  RAW       @map("raw")
+  VERIFIED  @map("verified")
+  REMOVED   @map("removed")
+  DUPLICATE @map("duplicate")
+  SEEN      @map("seen")
+  SAVED     @map("saved")
+
+  @@map("search_candidate_status")
+}
+
+enum SearchGoalStatus {
+  RUNNING   @map("running")
+  COMPLETED @map("completed")
+  PARTIAL   @map("partial")
+  FAILED    @map("failed")
+
+  @@map("search_goal_status")
+}
+
+model Company {
+  id                  String        @id @default(uuid())
+  name                String
+  websiteUrl          String        @unique @map("website_url")
+  canonicalWebsiteUrl String?       @map("canonical_website_url")
+  normalizedDomain    String?       @unique @map("normalized_domain")
+  companyKey          String?       @map("company_key")
+  industry            String?
+  location            String?
+  size                String?
+  description         String?
+  source              CompanySource @default(MANUAL)
+  sourceUrl           String?       @map("source_url")
+  seenCount           Int           @default(0) @map("seen_count")
+  lastSeenAt          DateTime?     @map("last_seen_at")
+  savedAt             DateTime?     @map("saved_at")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  contacts      Contact[]
+  leads         Lead[]
+  research      CompanyResearch[]
+  searchResults SearchResult[]
+  searchCandidates SearchCandidate[]
+
+  @@index([name])
+  @@index([companyKey])
+  @@index([industry])
+  @@index([location])
+  @@index([lastSeenAt])
+  @@map("companies")
+}
+
+model CompanyResearch {
+  id                 String   @id @default(uuid())
+  companyId          String   @map("company_id")
+  summary            String
+  productsOrServices String[] @default([]) @map("products_or_services")
+  targetCustomers    String[] @default([]) @map("target_customers")
+  painPoints         String[] @default([]) @map("pain_points")
+  salesOpportunities String[] @default([]) @map("sales_opportunities")
+  technologies       String[] @default([])
+  recentSignals      String[] @default([]) @map("recent_signals")
+  researchSources    String[] @default([]) @map("research_sources")
+  rawContent         Json?    @map("raw_content")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([createdAt])
+  @@map("company_research")
+}
+
+model Contact {
+  id              String   @id @default(uuid())
+  companyId       String   @map("company_id")
+  name            String?
+  title           String?
+  email           String?
+  phone           String?
+  snsUrl          String?  @map("sns_url")
+  sourceUrl       String?  @map("source_url")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  leads       Lead[]
+  emailDrafts EmailDraft[]
+  sentEmails  SentEmail[]
+
+  @@index([companyId, email])
+  @@index([companyId])
+  @@index([email])
+  @@map("contacts")
+}
+
+model Lead {
+  id        String       @id @default(uuid())
+  companyId String       @map("company_id")
+  contactId String?      @map("contact_id")
+  status    LeadStatus   @default(NEW)
+  priority  LeadPriority @default(MEDIUM)
+  owner     String?
+  tags      String[]     @default([])
+  notes     String?
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  company        Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contact        Contact?            @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  emailDrafts    EmailDraft[]
+  sentEmails     SentEmail[]
+  followUpTasks  FollowUpTask[]
+
+  @@index([companyId])
+  @@index([contactId])
+  @@index([status])
+  @@index([priority])
+  @@index([updatedAt])
+  @@map("leads")
+}
+
+model EmailDraft {
+  id        String           @id @default(uuid())
+  leadId    String           @map("lead_id")
+  contactId String?          @map("contact_id")
+  subject   String
+  body      String
+  tone      EmailTone        @default(PROFESSIONAL)
+  language  EmailLanguage    @default(EN)
+  status    EmailDraftStatus @default(DRAFT)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  lead       Lead        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  contact    Contact?    @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  sentEmails SentEmail[]
+
+  @@index([leadId])
+  @@index([contactId])
+  @@index([status])
+  @@index([updatedAt])
+  @@map("email_drafts")
+}
+
+model SentEmail {
+  id             String          @id @default(uuid())
+  leadId         String          @map("lead_id")
+  contactId      String?         @map("contact_id")
+  emailDraftId   String?         @map("email_draft_id")
+  gmailMessageId String?         @map("gmail_message_id")
+  toEmail        String          @map("to_email")
+  subject        String
+  body           String
+  sentAt         DateTime        @default(now()) @map("sent_at")
+  status         SentEmailStatus
+  errorMessage   String?         @map("error_message")
+
+  lead          Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  contact       Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  emailDraft    EmailDraft?    @relation(fields: [emailDraftId], references: [id], onDelete: SetNull)
+  followUpTasks FollowUpTask[]
+
+  @@index([leadId])
+  @@index([contactId])
+  @@index([emailDraftId])
+  @@index([gmailMessageId])
+  @@index([sentAt])
+  @@index([status])
+  @@map("sent_emails")
+}
+
+model FollowUpTask {
+  id          String         @id @default(uuid())
+  leadId      String         @map("lead_id")
+  sentEmailId String?        @map("sent_email_id")
+  title       String
+  dueDate     DateTime       @map("due_date")
+  status      FollowUpStatus @default(OPEN)
+  notes       String?
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  lead      Lead       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  sentEmail SentEmail? @relation(fields: [sentEmailId], references: [id], onDelete: SetNull)
+
+  @@index([leadId])
+  @@index([sentEmailId])
+  @@index([dueDate])
+  @@index([status])
+  @@map("follow_up_tasks")
+}
+
+model SearchResult {
+  id               String       @id @default(uuid())
+  query            String
+  companyName      String       @map("company_name")
+  websiteUrl       String?      @map("website_url")
+  snippet          String?
+  source           SearchSource
+  sourceUrl        String       @map("source_url")
+  savedAsCompanyId String?      @map("saved_as_company_id")
+  createdAt        DateTime     @default(now()) @map("created_at")
+
+  savedAsCompany Company? @relation(fields: [savedAsCompanyId], references: [id], onDelete: SetNull)
+
+  @@index([query])
+  @@index([websiteUrl])
+  @@index([source])
+  @@index([createdAt])
+  @@index([savedAsCompanyId])
+  @@map("search_results")
+}
+
+model SearchRun {
+  id                    String   @id @default(uuid())
+  searchGoalId          String?  @map("search_goal_id")
+  opportunityDescription String   @map("opportunity_description")
+  industry              String
+  location              String
+  resultLimit           Int      @map("result_limit")
+  searchPlan            Json     @map("search_plan")
+  searchQueries         String[] @default([]) @map("search_queries")
+  diagnostics           Json?
+  durationMs            Int      @default(0) @map("duration_ms")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  searchGoal SearchGoal? @relation(fields: [searchGoalId], references: [id], onDelete: SetNull)
+  candidates SearchCandidate[]
+
+  @@index([searchGoalId])
+  @@index([createdAt])
+  @@index([industry])
+  @@index([location])
+  @@map("search_runs")
+}
+
+model SearchGoal {
+  id                     String           @id @default(uuid())
+  opportunityDescription String           @map("opportunity_description")
+  referenceKeyword       String?          @map("reference_keyword")
+  industry               String
+  location               String
+  excludeKeywords        String[]         @default([]) @map("exclude_keywords")
+  generatedAngles        String[]         @default([]) @map("generated_angles")
+  generatedQueries       String[]         @default([]) @map("generated_queries")
+  targetCompanyCount     Int              @map("target_company_count")
+  foundCompanyCount      Int              @default(0) @map("found_company_count")
+  attemptCount           Int              @default(0) @map("attempt_count")
+  status                 SearchGoalStatus @default(RUNNING)
+  diagnostics            Json?
+  createdAt              DateTime         @default(now()) @map("created_at")
+  updatedAt              DateTime         @updatedAt @map("updated_at")
+
+  runs SearchRun[]
+  candidates SearchCandidate[]
+
+  @@index([createdAt])
+  @@index([status])
+  @@index([industry])
+  @@index([location])
+  @@map("search_goals")
+}
+
+model SearchCandidate {
+  id               String                @id @default(uuid())
+  searchRunId      String                @map("search_run_id")
+  searchGoalId     String?               @map("search_goal_id")
+  companyId        String?               @map("company_id")
+  companyName      String                @map("company_name")
+  websiteUrl       String                @map("website_url")
+  aboutUrl         String?               @map("about_url")
+  normalizedDomain String?               @map("normalized_domain")
+  companyKey       String?               @map("company_key")
+  source           String?
+  status           SearchCandidateStatus @default(RAW)
+  removedReason    String?               @map("removed_reason")
+  queryUsed        String?               @map("query_used")
+  evidence         Json?
+  salesBrief       Json?                 @map("sales_brief")
+  createdAt        DateTime              @default(now()) @map("created_at")
+
+  searchRun SearchRun @relation(fields: [searchRunId], references: [id], onDelete: Cascade)
+  searchGoal SearchGoal? @relation(fields: [searchGoalId], references: [id], onDelete: SetNull)
+  company   Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@index([searchRunId])
+  @@index([searchGoalId])
+  @@index([companyId])
+  @@index([normalizedDomain])
+  @@index([companyKey])
+  @@index([status])
+  @@index([createdAt])
+  @@map("search_candidates")
+}
