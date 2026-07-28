@@ -1,12 +1,24 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { Badge, MetricCard, SectionCard, statusTone } from "@/components/ui";
+import { CompanyProfileEditor } from "@/components/company-profile-editor";
+import { MarkCalledButton } from "@/components/mark-called-button";
+import { ContactCardEditor } from "@/components/contact-card-editor";
+import { DatabaseUnavailable } from "@/components/database-unavailable";
+import { MarkRepliedButton } from "@/components/mark-replied-button";
+import { ManualContactForm } from "@/components/manual-contact-form";
+import { ResearchMemoEditor } from "@/components/research-memo-editor";
+import { Badge, SectionCard } from "@/components/ui";
 import { WorkflowActionButton } from "@/components/workflow-action-button";
+import { formatIndustryJa } from "@/lib/industries";
+import { getLatestContactEventsByLeadIds } from "@/lib/leads/contact-events";
+import { deriveLeadContactActivity } from "@/lib/leads/contact-activity";
 import {
+  type CompanyQueueRow,
   formatDate,
-  getCompanyQueueRow,
-  statusLabel,
+  formatDateTime,
+  isLeadContacted,
+  safeGetCompanyQueueRow,
 } from "@/lib/db/sales-workflow";
 
 export const dynamic = "force-dynamic";
@@ -17,15 +29,27 @@ type CompanyDetailPageProps = {
   }>;
 };
 
-type WorkflowEndpoint =
-  | "/api/company-research"
-  | "/api/email-drafts";
+function leadStatusJa(value: string) {
+  const map: Record<string, string> = {
+    NEW: "新規",
+    RESEARCHED: "調査済み",
+    QUALIFIED: "見込みあり",
+    CONTACTED: "連絡済み",
+    REPLIED: "返信あり",
+    FOLLOW_UP: "フォロー中",
+    MEETING: "商談中",
+    WON: "受注",
+    LOST: "失注",
+  };
+  return map[value.toUpperCase()] ?? value.toLowerCase();
+}
 
 type WorkflowAction =
   | {
       kind: "api";
       label: string;
-      endpoint: WorkflowEndpoint;
+      endpoint: "/api/email-drafts";
+      redirectTo?: string;
       helper: string;
     }
   | {
@@ -35,276 +59,300 @@ type WorkflowAction =
       helper: string;
     };
 
-function getWorkflowAction(
-  row: NonNullable<Awaited<ReturnType<typeof getCompanyQueueRow>>>,
-): WorkflowAction {
-  if (!row.research) {
-    return {
-      kind: "api",
-      label: "Create research",
-      endpoint: "/api/company-research",
-      helper: "Creates a first research record.",
-    };
-  }
-
-  if (!row.latestDraft) {
-    return {
-      kind: "api",
-      label: "Create draft",
-      endpoint: "/api/email-drafts",
-      helper: "Creates a draft from company and research.",
-    };
-  }
-
-  if (row.latestSentEmail) {
+function getWorkflowAction(row: CompanyQueueRow): WorkflowAction {
+  if (!row.outreachEmail) {
     return {
       kind: "link",
-      label: "Review outreach",
-      href: "/outreach-history",
-      helper: "Sent email exists.",
+      label: "担当者を追加",
+      href: "#manual-contact",
+      helper: "メール作成前に宛先メールが必要です。",
+    };
+  }
+
+  if (row.latestDraft) {
+    return {
+      kind: "link",
+      label: "下書きを確認",
+      href: "/email-composer",
+      helper: "下書きがあります。承認後に送信できます。",
+    };
+  }
+
+  if (row.latestSentEmail?.status === "SENT") {
+    return {
+      kind: "api",
+      label: "フォローメールを作成",
+      endpoint: "/api/email-drafts",
+      redirectTo: "/email-composer",
+      helper: "送信済みです。新しい下書きを作って再送できます。",
     };
   }
 
   return {
-    kind: "link",
-    label: "Review draft",
-    href: "/email-composer",
-    helper: "Draft exists.",
+    kind: "api",
+    label: "下書きを作成",
+    endpoint: "/api/email-drafts",
+    redirectTo: "/email-composer",
+    helper: "初回メール用の下書きを作成します。",
   };
 }
 
-export default async function CompanyDetailPage({ params }: CompanyDetailPageProps) {
+export default async function CompanyDetailPage({
+  params,
+}: CompanyDetailPageProps) {
   const { companyId } = await params;
-  const row = await getCompanyQueueRow(companyId);
+  const loaded = await safeGetCompanyQueueRow(companyId);
 
+  if (!loaded.ok) {
+    return (
+      <DatabaseUnavailable eyebrow="会社詳細" message={loaded.message} />
+    );
+  }
+
+  const row = loaded.row;
   if (!row) {
     notFound();
   }
 
-  const contactStatus = row.primaryContact?.email ? "Recipient ready" : "Missing email";
-  const outreachStatus = row.latestSentEmail
-    ? "Tracking reply"
-    : row.latestDraft
-      ? "Draft ready"
-      : "No draft";
+  const leadId = row.primaryLead?.id ?? null;
+  const eventMap = leadId
+    ? await getLatestContactEventsByLeadIds([leadId])
+    : new Map();
+  const latestEvents = leadId ? eventMap.get(leadId) ?? null : null;
+
   const workflowAction = getWorkflowAction(row);
+  const isReplied = row.primaryLead?.status === "REPLIED";
+  const contactActivity = deriveLeadContactActivity({
+    tags: row.primaryLead?.tags,
+    events: latestEvents,
+  });
+  const contacted =
+    isLeadContacted(row.primaryLead?.status) ||
+    row.latestSentEmail?.status === "SENT";
+  const activityMeta = [
+    contactActivity.emailContactedAt
+      ? `メール送信 ${formatDateTime(contactActivity.emailContactedAt)}`
+      : null,
+    contactActivity.phoneContactedAt
+      ? `架電 ${formatDateTime(contactActivity.phoneContactedAt)}`
+      : null,
+    contactActivity.emailRepliedAt
+      ? `返信受信 ${formatDateTime(contactActivity.emailRepliedAt)}`
+      : null,
+    row.company.savedAt ? `保存日 ${formatDate(row.company.savedAt)}` : null,
+  ].filter((value): value is string => Boolean(value));
 
   return (
     <AppShell
-      action={{ label: "Back to queue", href: "/companies" }}
-      eyebrow="Company detail"
-      title={row.company.name || "Unnamed company"}
-      description={row.company.description ?? "Real company row from PostgreSQL."}
+      action={{ label: "リード一覧へ", href: "/leads" }}
+      dense
+      eyebrow="会社詳細"
+      title={row.company.name || "未命名の会社"}
+      description={[formatIndustryJa(row.company.industry), row.company.location]
+        .filter(Boolean)
+        .join(" · ")}
     >
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          helper={row.research ? "research available" : "needs research"}
-          label="Research"
-          value={row.research ? "Ready" : "Pending"}
-        />
-        <MetricCard
-          helper={row.primaryContact?.name ?? "company-level lead"}
-          label="Contact"
-          value={contactStatus}
-        />
-        <MetricCard
-          helper={
-            row.latestSentEmail
-              ? formatDate(row.latestSentEmail.sentAt)
-              : statusLabel(row.latestDraft?.status)
-          }
-          label="Outreach"
-          value={outreachStatus}
-        />
-      </div>
-
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1.25fr_0.75fr]">
-        <div className="space-y-4">
-          <SectionCard title="AI review">
-            <div className="grid gap-4 md:grid-cols-[220px_1fr]">
-              <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Company profile
-                </p>
-                <dl className="mt-3 space-y-3 text-sm">
-                  <div>
-                    <dt className="text-slate-500">Website</dt>
-                    <dd className="mt-1 truncate font-medium text-emerald-700">
-                      {row.company.websiteUrl ? (
-                        <a
-                          href={row.company.websiteUrl}
-                          rel="noreferrer"
-                          target="_blank"
-                        >
-                          {row.company.websiteUrl}
-                        </a>
-                      ) : (
-                        "No website"
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-slate-500">Industry</dt>
-                    <dd className="mt-1 font-medium text-slate-900">
-                      {row.company.industry ?? "Unknown"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-slate-500">Location</dt>
-                    <dd className="mt-1 font-medium text-slate-900">
-                      {row.company.location ?? "Unknown"}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-slate-500">Size</dt>
-                    <dd className="mt-1 font-medium text-slate-900">
-                      {row.company.size ?? "Unknown"}
-                    </dd>
-                  </div>
-                </dl>
-              </div>
-
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {row.primaryLead ? (
-                    <>
-                      <Badge tone={statusTone(statusLabel(row.primaryLead.status))}>
-                        {statusLabel(row.primaryLead.status)}
-                      </Badge>
-                      <Badge>{statusLabel(row.primaryLead.priority)} priority</Badge>
-                    </>
-                  ) : (
-                    <Badge tone="amber">No lead</Badge>
-                  )}
-                </div>
-                <p className="mt-4 text-sm leading-6 text-slate-700">
-                  {row.research?.summary ??
-                    row.company.description ??
-                    "No research has been generated yet. Keep this company out of sending until research is complete."}
-                </p>
-                {row.company.savedAt ? (
-                  <div className="mt-4 rounded-md border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-                    Saved from lead search on {formatDate(row.company.savedAt)}.
-                  </div>
-                ) : null}
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-950">
-                      Pain signals
-                    </h3>
-                    <ul className="mt-2 space-y-2 text-sm text-slate-600">
-                      {(row.research?.painPoints.length
-                        ? row.research.painPoints
-                        : ["No pain signals recorded yet."]
-                      ).map((item) => (
-                        <li key={item}>- {item}</li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-950">
-                      Sales angle
-                    </h3>
-                    <ul className="mt-2 space-y-2 text-sm text-slate-600">
-                      {(row.research?.salesOpportunities.length
-                        ? row.research.salesOpportunities
-                        : ["No sales opportunities recorded yet."]
-                      ).map((item) => (
-                        <li key={item}>- {item}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              </div>
+      <div className="grid gap-3 xl:grid-cols-12 xl:items-stretch">
+        <SectionCard className="xl:col-span-4" compact title="会社情報">
+          <div className="mb-2 space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={contacted ? "emerald" : "amber"}>
+                {contacted ? "連絡済み" : "未連絡"}
+              </Badge>
+              {row.primaryLead ? (
+                <Badge tone="slate">
+                  リード: {leadStatusJa(row.primaryLead.status)}
+                </Badge>
+              ) : null}
+              {contactActivity.hasEmailContact ? <Badge tone="sky">メール送信</Badge> : null}
+              {contactActivity.hasPhoneContact ? <Badge tone="sky">架電済み</Badge> : null}
+              {contactActivity.hasEmailReply ? <Badge tone="emerald">メール返信あり</Badge> : null}
             </div>
-          </SectionCard>
+            {activityMeta.length > 0 ? (
+              <p className="text-xs text-slate-500">{activityMeta.join(" / ")}</p>
+            ) : null}
+          </div>
+          <CompanyProfileEditor
+            key={row.company.updatedAt.toISOString()}
+            companyId={row.company.id}
+            compact
+            initial={{
+              name: row.company.name,
+              websiteUrl: row.company.websiteUrl,
+              industry: row.company.industry ?? "",
+              location: row.company.location ?? "",
+              address: row.company.address ?? "",
+              primaryEmail: row.company.primaryEmail ?? "",
+              contactFormUrl: row.company.contactFormUrl ?? "",
+              description: row.company.description ?? "",
+            }}
+          />
+        </SectionCard>
 
-          <SectionCard title="Outreach preview">
-            {row.latestSentEmail ? (
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone={statusTone(statusLabel(row.latestSentEmail.status))}>
-                    {statusLabel(row.latestSentEmail.status)}
-                  </Badge>
-                  <span className="text-sm text-slate-500">
-                    {formatDate(row.latestSentEmail.sentAt)}
-                  </span>
-                </div>
-                <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
-                  <p className="font-medium text-slate-950">
-                    {row.latestSentEmail.subject}
-                  </p>
-                  <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-700">
-                    {row.latestSentEmail.body}
-                  </p>
-                </div>
+        <SectionCard className="xl:col-span-4" compact title="担当者">
+          <div className="space-y-3">
+            {row.company.contacts.length > 0 ? (
+              <div className="max-h-56 space-y-1.5 overflow-y-auto">
+                {row.company.contacts.map((contact) => (
+                  <ContactCardEditor
+                    companyId={row.company.id}
+                    contact={{
+                      id: contact.id,
+                      name: contact.name,
+                      title: contact.title,
+                      email: contact.email,
+                      phone: contact.phone,
+                    }}
+                    isActive={row.primaryContact?.id === contact.id}
+                    key={contact.id}
+                  />
+                ))}
               </div>
-            ) : row.latestDraft ? (
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone={statusTone(statusLabel(row.latestDraft.status))}>
-                    {statusLabel(row.latestDraft.status)}
-                  </Badge>
-                  <Badge>{statusLabel(row.latestDraft.tone)}</Badge>
-                  <Badge>{statusLabel(row.latestDraft.language)}</Badge>
-                </div>
-                <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
-                  <p className="font-medium text-slate-950">
-                    {row.latestDraft.subject}
+            ) : row.outreachEmail || row.company.contactFormUrl ? (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-sm">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <p className="text-xs font-medium text-emerald-800">
+                    現在の宛先
                   </p>
-                  <p className="mt-3 whitespace-pre-line text-sm leading-6 text-slate-700">
-                    {row.latestDraft.body}
-                  </p>
+                  <Badge tone="emerald">使用中</Badge>
                 </div>
+                {row.outreachEmail ? (
+                  <p className="mt-1 truncate font-medium text-slate-900">
+                    {row.outreachEmail}
+                  </p>
+                ) : null}
+                {row.company.contactFormUrl ? (
+                  <a
+                    className="mt-1 block truncate text-xs text-emerald-700 hover:text-emerald-800"
+                    href={row.company.contactFormUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    お問い合わせフォーム
+                  </a>
+                ) : null}
               </div>
             ) : (
-              <p className="text-sm leading-6 text-slate-600">
-                No email draft exists yet. Research should come before outreach.
-              </p>
+              <p className="text-sm text-slate-500">宛先がまだありません</p>
             )}
-          </SectionCard>
-        </div>
 
-        <div className="space-y-4">
-          <SectionCard title="Contact">
-            <div className="space-y-3 text-sm">
-              <div>
-                <p className="font-medium text-slate-950">
-                  {row.primaryContact?.name ?? "No person selected"}
-                </p>
-                <p className="mt-1 text-slate-500">
-                  {row.primaryContact?.title ?? "Company-level outreach only"}
-                </p>
-              </div>
-              <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">
-                {row.primaryContact?.email ?? "Recipient email missing"}
+            {row.company.contacts.length > 0 &&
+            !row.primaryContact &&
+            row.company.primaryEmail ? (
+              <p className="text-xs text-slate-500">
+                会社メール {row.company.primaryEmail} を暫定宛先にしています
               </p>
-            </div>
-          </SectionCard>
+            ) : null}
 
-          <SectionCard title="Next action">
-            <div className="space-y-3">
+            <div id="manual-contact" className="border-t border-slate-100 pt-2">
+              <p className="mb-2 text-xs font-medium text-slate-800">
+                担当者を追加
+              </p>
+              <ManualContactForm
+                companyId={row.company.id}
+                compact
+                defaultSourceUrl={row.company.websiteUrl}
+              />
+            </div>
+
+            <WorkflowActionButton
+              companyId={row.company.id}
+              endpoint="/api/company-enrichment"
+              label="会社情報を補完"
+            />
+          </div>
+        </SectionCard>
+
+        <div className="flex flex-col gap-3 xl:col-span-4">
+          <SectionCard compact title="次のアクション">
+            <div className="space-y-2">
               {workflowAction.kind === "api" ? (
                 <WorkflowActionButton
                   companyId={row.company.id}
                   endpoint={workflowAction.endpoint}
                   label={workflowAction.label}
+                  redirectTo={workflowAction.redirectTo}
                 />
               ) : (
                 <Link
-                  className="flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-medium text-white hover:bg-slate-800"
+                  className="flex h-10 items-center justify-center rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800"
                   href={workflowAction.href}
                 >
                   {workflowAction.label}
                 </Link>
               )}
-              <p className="text-sm text-slate-500">{workflowAction.helper}</p>
+              <p className="text-xs text-slate-500">{workflowAction.helper}</p>
+              {row.primaryLead &&
+              row.latestSentEmail?.status === "SENT" &&
+              !isReplied ? (
+                <MarkRepliedButton leadId={row.primaryLead.id} />
+              ) : null}
+              {row.primaryLead &&
+              (row.primaryContact?.phone || row.company.contacts.some((contact) => contact.phone)) ? (
+                <MarkCalledButton leadId={row.primaryLead.id} />
+              ) : null}
+              {row.latestSentEmail?.status === "SENT" ? (
+                <Link
+                  className="inline-flex text-xs font-medium text-emerald-700 hover:text-emerald-800"
+                  href="/outreach-history"
+                >
+                  送信履歴を見る
+                </Link>
+              ) : null}
               {row.nextFollowUp ? (
-                <p className="text-sm text-slate-500">
-                  Follow-up due {formatDate(row.nextFollowUp.dueDate)}
+                <p className="text-xs text-slate-500">
+                  フォロー期限 {formatDate(row.nextFollowUp.dueDate)}
                 </p>
               ) : null}
             </div>
+          </SectionCard>
+
+          <SectionCard
+            className="flex min-h-0 flex-1 flex-col"
+            compact
+            title="調査メモ"
+          >
+            <ResearchMemoEditor
+              key={row.research?.id ?? "new"}
+              companyId={row.company.id}
+              compact
+              initialSummary={row.research?.summary ?? ""}
+            />
+          </SectionCard>
+
+          <SectionCard compact title="メール">
+            {row.latestDraft ? (
+              <div className="max-h-40 space-y-1.5 overflow-y-auto">
+                <p className="text-xs font-medium text-emerald-800">
+                  進行中の下書き
+                </p>
+                <p className="text-sm font-medium text-slate-950">
+                  {row.latestDraft.subject}
+                </p>
+                <p className="whitespace-pre-line text-xs leading-5 text-slate-700">
+                  {row.latestDraft.body}
+                </p>
+              </div>
+            ) : row.latestSentEmail ? (
+              <div className="max-h-40 space-y-1.5 overflow-y-auto">
+                <p className="text-xs text-slate-500">
+                  最終送信 {formatDate(row.latestSentEmail.sentAt)}
+                </p>
+                <p className="text-sm font-medium text-slate-950">
+                  {row.latestSentEmail.subject}
+                </p>
+                {row.latestSentEmail.errorMessage ? (
+                  <p className="text-xs text-rose-600">
+                    {row.latestSentEmail.errorMessage}
+                  </p>
+                ) : null}
+                <p className="whitespace-pre-line text-xs leading-5 text-slate-700">
+                  {row.latestSentEmail.body}
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">—</p>
+            )}
           </SectionCard>
         </div>
       </div>

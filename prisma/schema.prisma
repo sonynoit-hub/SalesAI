@@ -114,8 +114,11 @@ model Company {
   companyKey          String?       @map("company_key")
   industry            String?
   location            String?
+  address             String?
   size                String?
   description         String?
+  primaryEmail        String?       @map("primary_email")
+  contactFormUrl      String?       @map("contact_form_url")
   source              CompanySource @default(MANUAL)
   sourceUrl           String?       @map("source_url")
   seenCount           Int           @default(0) @map("seen_count")
@@ -199,6 +202,7 @@ model Lead {
   emailDrafts    EmailDraft[]
   sentEmails     SentEmail[]
   followUpTasks  FollowUpTask[]
+  contactEvents  ContactEvent[]
 
   @@index([companyId])
   @@index([contactId])
@@ -277,6 +281,25 @@ model FollowUpTask {
   @@index([dueDate])
   @@index([status])
   @@map("follow_up_tasks")
+}
+
+model ContactEvent {
+  id          String   @id
+  leadId      String   @map("lead_id")
+  channel     String
+  eventType   String   @map("event_type")
+  eventAt     DateTime @default(now()) @map("event_at")
+  source      String?
+  note        String?
+  referenceId String?  @map("reference_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([eventAt])
+  @@index([channel, eventType])
+  @@map("contact_events")
 }
 
 model SearchResult {

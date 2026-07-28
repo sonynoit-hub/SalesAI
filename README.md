@@ -76,7 +76,21 @@ Out of scope for MVP:
 
 ## Development
 
-Run the local development server:
+Start the full local stack (Docker Desktop, Postgres, SearXNG, Crawl4AI, Ollama, Next.js):
+
+```bash
+npm run dev:up
+```
+
+Useful variants:
+
+```bash
+npm run dev:up -- --with-queue   # also poll the auto-send queue
+npm run dev:up -- --containers   # containers + Ollama only
+npm run dev:down                 # stop Docker services
+```
+
+Or start only the Next.js app if services are already running:
 
 ```bash
 npm run dev
@@ -89,13 +103,12 @@ npm run lint
 npm run build
 ```
 
-Copy `.env.example` to `.env.local` when local services and secrets are ready.
+Copy `.env.example` to `.env.local` when local services and secrets are ready. `dev:up` will create `.env.local` from the example if it is missing.
 
-Run local search services:
+Manual local search services (also covered by `dev:up`):
 
 ```bash
-docker run -d --name salesai-searxng -p 8080:8080 -v "$(pwd)/services/searxng:/etc/searxng" searxng/searxng
-docker run -d --name salesai-crawl4ai -p 11235:11235 --shm-size=1g unclecode/crawl4ai:latest
+docker compose up -d
 ollama serve
 ```
 
@@ -113,11 +126,51 @@ npm run db:migrate
 npm run db:push
 npm run db:seed
 npm run db:studio
+npm run db:backup
+npm run db:restore -- work/backups/<backup-file>.sql.gz
 ```
 
 The current local `DATABASE_URL` expects a PostgreSQL database named `salesai`.
+
+### Backup and restore runbook (pilot-safe)
+
+Before migrations, large imports, or bulk edits, create a backup:
+
+```bash
+npm run db:backup
+```
+
+This writes a compressed SQL backup under `work/backups/` by default.
+You can also specify a custom output path:
+
+```bash
+npm run db:backup -- work/backups/pre-import.sql.gz
+```
+
+Restore from a backup (overwrites current local data):
+
+```bash
+npm run db:restore -- work/backups/pre-import.sql.gz
+```
+
+Safety rules for pilot data:
+
+- Never commit `.env.local`, OAuth tokens, or backup dumps.
+- Keep backup files under `work/backups/`.
+- Run a backup before schema changes and before importing external lead lists.
+- After restore, run `npm run db:generate` and restart the app (`npm run dev:up`).
 
 ## Database-backed UI
 
 The current UI reads workflow data from PostgreSQL through Prisma. Use
 `npm run db:seed` to create or refresh local development records.
+
+## Internal pilot checklist (1-3 users)
+
+- [ ] Docker and PostgreSQL are healthy (`npm run dev:up`)
+- [ ] A fresh backup exists (`npm run db:backup`)
+- [ ] OAuth/email provider path tested with one real send
+- [ ] Follow-up queue actions tested (`完了 / スキップ / 再設定`)
+- [ ] Contact actions tested (`架電済みにする / 返信ありにする`)
+- [ ] Outreach history reflects status and contact channel labels
+- [ ] Lint and tests pass (`npm run lint`, `npm test`)
