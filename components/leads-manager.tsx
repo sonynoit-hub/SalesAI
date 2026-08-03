@@ -108,7 +108,7 @@ export function LeadsManager({ rows }: { rows: LeadManageRow[] }) {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [locationFilter, setLocationFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [qualifyFilter, setQualifyFilter] = useState<QualifyFilter>("unconfirmed");
+  const [qualifyFilter, setQualifyFilter] = useState<QualifyFilter>("all");
   const [localStatusByLeadId, setLocalStatusByLeadId] = useState<
     Record<string, string>
   >({});
