@@ -185,14 +185,14 @@ function buildSummary({
 
 function inferIndustry(content: string) {
   const matches = [
-    ["manufacturing", "Manufacturing"],
-    ["software", "Software"],
-    ["cloud", "Technology"],
-    ["logistics", "Logistics"],
-    ["construction", "Construction"],
-    ["healthcare", "Healthcare"],
-    ["retail", "Retail"],
-    ["finance", "Financial services"],
+    ["manufacturing", "製造業"],
+    ["software", "ソフトウェア"],
+    ["cloud", "テクノロジー"],
+    ["logistics", "物流"],
+    ["construction", "建設業"],
+    ["healthcare", "ヘルスケア"],
+    ["retail", "小売"],
+    ["finance", "金融サービス"],
   ] as const;
 
   return matches.find(([keyword]) => includesAny(content, [keyword]))?.[1] ?? null;

@@ -154,13 +154,13 @@ export default async function FollowUpsPage() {
                           <p className="mt-1 text-xs text-slate-500">
                             {[
                               contactActivity.emailContactedAt
-                                ? `メール送信 ${formatDateTime(contactActivity.emailContactedAt)}`
+                                ? `メール ${formatDateTime(contactActivity.emailContactedAt)}`
                                 : null,
                               contactActivity.phoneContactedAt
                                 ? `架電 ${formatDateTime(contactActivity.phoneContactedAt)}`
                                 : null,
                               contactActivity.emailRepliedAt
-                                ? `返信受信 ${formatDateTime(contactActivity.emailRepliedAt)}`
+                                ? `返信 ${formatDateTime(contactActivity.emailRepliedAt)}`
                                 : null,
                             ]
                               .filter(Boolean)

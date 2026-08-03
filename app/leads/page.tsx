@@ -1,108 +1,91 @@
-import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
-import { Badge, SectionCard, statusTone } from "@/components/ui";
-import { getCompanyQueueRows, statusLabel } from "@/lib/db/sales-workflow";
+import { DatabaseUnavailable } from "@/components/database-unavailable";
+import { LeadsExcelImport } from "@/components/leads-excel-import";
+import {
+  LeadsManager,
+  type LeadManageRow,
+} from "@/components/leads-manager";
+import {
+  formatDateTime,
+  safeGetCompanyQueueRows,
+} from "@/lib/db/sales-workflow";
+import { deriveLeadContactActivity } from "@/lib/leads/contact-activity";
+import { getLatestContactEventsByLeadIds } from "@/lib/leads/contact-events";
+import {
+  latestLeadProgressAt,
+  leadProgressEventLabel,
+  resolveLeadProgressStatus,
+} from "@/lib/leads/status";
 
 export const dynamic = "force-dynamic";
 
 export default async function LeadsPage() {
-  const rows = (await getCompanyQueueRows()).filter((row) => row.primaryLead);
+  const loaded = await safeGetCompanyQueueRows();
+  if (!loaded.ok) {
+    return <DatabaseUnavailable eyebrow="パイプライン" message={loaded.message} />;
+  }
+
+  const leadIds = loaded.rows
+    .map((row) => row.primaryLead?.id)
+    .filter((id): id is string => Boolean(id));
+  const contactEventsByLeadId = await getLatestContactEventsByLeadIds(leadIds);
+
+  const rows: LeadManageRow[] = loaded.rows
+    .filter((row) => row.primaryLead)
+    .map((row) => {
+      const lead = row.primaryLead!;
+      const email =
+        row.primaryContact?.email ?? row.outreachEmail ?? row.company.primaryEmail ?? "";
+      const contactFormUrl = row.company.contactFormUrl ?? "";
+      const contactActivity = deriveLeadContactActivity({
+        tags: lead.tags,
+        events: contactEventsByLeadId.get(lead.id),
+      });
+      const progressStatus = resolveLeadProgressStatus(lead.status, contactActivity);
+      const progressAt = latestLeadProgressAt(contactActivity, lead.updatedAt);
+      const progressEvent = leadProgressEventLabel(contactActivity, progressAt);
+      const progressAtLabel = progressEvent
+        ? `${progressEvent} ${formatDateTime(progressAt)}`
+        : formatDateTime(progressAt);
+
+      return {
+        leadId: lead.id,
+        companyId: row.company.id,
+        companyName: row.company.name,
+        websiteUrl: row.company.websiteUrl,
+        industry: row.company.industry ?? "",
+        location: row.company.location ?? "",
+        address: row.company.address ?? "",
+        contactName: row.primaryContact?.name ?? "",
+        contactTitle: row.primaryContact?.title ?? "",
+        email,
+        phone: row.primaryContact?.phone ?? "",
+        contactFormUrl,
+        hasOutreachChannel: Boolean(email || contactFormUrl),
+        status: lead.status,
+        progressStatus,
+        priority: lead.priority,
+        notes: lead.notes ?? "",
+        contactActivity: {
+          hasEmailContact: contactActivity.hasEmailContact,
+          hasPhoneContact: contactActivity.hasPhoneContact,
+          hasEmailReply: contactActivity.hasEmailReply,
+        },
+        progressAtLabel,
+      };
+    });
 
   return (
     <AppShell
-      eyebrow="Pipeline"
-      title="Lead CRM"
-      description="Review lead status, priority, contacts, tags, and next action from PostgreSQL."
+      dense
+      eyebrow="パイプライン"
+      title="リード管理"
+      description="作成・編集・削除・インポートと連絡先の一括取得。"
     >
-      <SectionCard title="Pipeline list">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] border-collapse text-left text-sm">
-            <thead className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-4 py-3 font-semibold">Company</th>
-                <th className="px-4 py-3 font-semibold">Contact</th>
-                <th className="px-4 py-3 font-semibold">Status</th>
-                <th className="px-4 py-3 font-semibold">Priority</th>
-                <th className="px-4 py-3 font-semibold">Next action</th>
-                <th className="px-4 py-3 font-semibold">Tags</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {rows.map((row) => {
-                const lead = row.primaryLead;
-
-                if (!lead) return null;
-
-                return (
-                  <tr key={lead.id}>
-                    <td className="px-4 py-4">
-                      <Link
-                        className="font-medium text-slate-950 hover:text-emerald-700"
-                        href={`/companies/${row.company.id}`}
-                      >
-                        {row.company.name || "Unnamed company"}
-                      </Link>
-                      <p className="text-xs text-slate-500">
-                        {[row.company.industry, row.company.location]
-                          .filter(Boolean)
-                          .join(" · ") || "No industry/location"}
-                      </p>
-                      <p className="mt-2 max-w-56 truncate text-xs font-medium text-emerald-700">
-                        {row.company.websiteUrl || "No website"}
-                      </p>
-                      {row.company.description ? (
-                        <p className="mt-2 max-w-72 text-xs leading-5 text-slate-500">
-                          {row.company.description}
-                        </p>
-                      ) : null}
-                    </td>
-                    <td className="px-4 py-4">
-                      <p className="text-slate-800">
-                        {row.primaryContact?.name ?? "Unknown"}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {row.primaryContact?.title ?? "Company-level lead"}
-                      </p>
-                    </td>
-                    <td className="px-4 py-4">
-                      <Badge tone={statusTone(statusLabel(lead.status))}>
-                        {statusLabel(lead.status)}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-4 text-slate-700">
-                      {statusLabel(lead.priority)}
-                    </td>
-                    <td className="px-4 py-4">
-                      <p className="text-slate-800">
-                        {row.nextFollowUp
-                          ? row.nextFollowUp.title
-                          : row.latestDraft
-                            ? "Review email draft"
-                            : "Review saved company"}
-                      </p>
-                      <Link
-                        className="mt-2 inline-flex text-xs font-semibold text-emerald-700 hover:text-emerald-800"
-                        href={`/companies/${row.company.id}`}
-                      >
-                        Open record
-                      </Link>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex flex-wrap gap-1">
-                        {lead.tags.length > 0 ? (
-                          lead.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)
-                        ) : (
-                          <span className="text-xs text-slate-500">No tags</span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
+      <div className="space-y-2">
+        <LeadsExcelImport />
+        <LeadsManager rows={rows} />
+      </div>
     </AppShell>
   );
 }

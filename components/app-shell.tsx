@@ -1,10 +1,52 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useSyncExternalStore } from "react";
 import { workflowSteps } from "@/lib/navigation";
+
+const STORAGE_KEY = "salesai-sidebar-collapsed";
+const listeners = new Set<() => void>();
+
+function emit() {
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function getCollapsedSnapshot() {
+  try {
+    return window.localStorage.getItem(STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function getServerCollapsedSnapshot() {
+  return false;
+}
+
+function setCollapsedPreference(next: boolean) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, next ? "1" : "0");
+  } catch {
+    // Ignore storage errors.
+  }
+  emit();
+}
 
 type AppShellProps = {
   eyebrow?: string;
   title: string;
   description: string;
+  dense?: boolean;
   action?: {
     label: string;
     href: string;
@@ -16,48 +58,161 @@ export function AppShell({
   eyebrow = "SalesAI",
   title,
   description,
+  dense = false,
   action,
   children,
 }: AppShellProps) {
+  const pathname = usePathname();
+  const collapsed = useSyncExternalStore(
+    subscribe,
+    getCollapsedSnapshot,
+    getServerCollapsedSnapshot,
+  );
+
   return (
-    <main className="min-h-screen bg-slate-50">
-      <div className="mx-auto flex min-h-screen max-w-7xl">
-        <aside className="hidden w-64 border-r border-slate-200 bg-white px-5 py-6 md:block">
-          <Link href="/" className="block">
-            <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700">
-              SalesAI
-            </p>
-            <h1 className="mt-2 text-xl font-semibold text-slate-950">
-              IT sales workspace
-            </h1>
-          </Link>
-          <nav className="mt-8 space-y-1">
-            {workflowSteps.map((item) => (
+    <main className="min-h-screen bg-white">
+      <div className="mx-auto flex min-h-screen max-w-[1600px]">
+        <aside
+          className={`sticky top-0 hidden h-screen shrink-0 border-r border-slate-200 bg-white transition-[width] duration-200 md:flex md:flex-col ${
+            collapsed ? "w-14" : "w-64"
+          }`}
+        >
+          <div
+            className={`flex items-start justify-between gap-2 border-b border-slate-100 ${
+              collapsed ? "px-2 py-3" : "px-4 py-4"
+            }`}
+          >
+            {collapsed ? (
               <Link
-                className="block rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-950"
-                href={item.href}
-                key={item.href}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-xs font-bold text-emerald-700 hover:bg-slate-100"
+                href="/"
+                title="SalesAI"
               >
-                {item.label}
+                SA
               </Link>
-            ))}
+            ) : (
+              <Link href="/" className="block min-w-0">
+                <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700">
+                  SalesAI
+                </p>
+                <h1 className="mt-1 text-lg font-semibold leading-6 text-slate-950">
+                  IT sales workspace
+                </h1>
+              </Link>
+            )}
+            <button
+              aria-label={collapsed ? "メニューを開く" : "メニューを閉じる"}
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-950"
+              onClick={() => setCollapsedPreference(!collapsed)}
+              title={collapsed ? "メニューを開く" : "メニューを閉じる"}
+              type="button"
+            >
+              {collapsed ? "»" : "«"}
+            </button>
+          </div>
+
+          <nav
+            className={`mt-3 flex-1 space-y-1 overflow-y-auto ${
+              collapsed ? "px-1.5" : "px-3"
+            }`}
+          >
+            {workflowSteps.map((item) => {
+              const active =
+                pathname === item.href || pathname.startsWith(`${item.href}/`);
+              const short = item.label
+                .split(" ")
+                .map((part) => part[0])
+                .join("")
+                .slice(0, 2)
+                .toUpperCase();
+
+              if (collapsed) {
+                return (
+                  <Link
+                    className={`flex h-9 items-center justify-center rounded-md text-[11px] font-semibold ${
+                      active
+                        ? "bg-emerald-50 text-emerald-800"
+                        : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                    }`}
+                    href={item.href}
+                    key={item.href}
+                    title={item.label}
+                  >
+                    {short}
+                  </Link>
+                );
+              }
+
+              return (
+                <Link
+                  className={`block rounded-md px-3 py-2 text-sm font-medium ${
+                    active
+                      ? "bg-emerald-50 text-emerald-800"
+                      : "text-slate-700 hover:bg-slate-100 hover:text-slate-950"
+                  }`}
+                  href={item.href}
+                  key={item.href}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
           </nav>
         </aside>
 
-        <section className="flex-1 px-4 py-5 sm:px-6 lg:px-8">
-          <div className="mb-6 flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
+        <section
+          className={`min-w-0 flex-1 ${
+            dense ? "px-4 py-3 sm:px-5" : "px-4 py-5 sm:px-6 lg:px-8"
+          }`}
+        >
+          <div className="mb-3 flex items-center gap-2 md:hidden">
+            <details className="relative">
+              <summary className="inline-flex h-9 cursor-pointer list-none items-center rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 hover:bg-slate-50">
+                メニュー
+              </summary>
+              <div className="absolute left-0 z-20 mt-1 w-56 rounded-md border border-slate-200 bg-white p-2 shadow-lg">
+                {workflowSteps.map((item) => (
+                  <Link
+                    className="block rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+                    href={item.href}
+                    key={item.href}
+                  >
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+            </details>
+          </div>
+
+          <div
+            className={`flex flex-col gap-3 border-b border-slate-200 sm:flex-row sm:items-end sm:justify-between ${
+              dense ? "mb-3 pb-3" : "mb-6 gap-4 pb-5"
+            }`}
+          >
             <div>
               <p className="text-sm font-medium text-emerald-700">{eyebrow}</p>
-              <h2 className="mt-1 text-2xl font-semibold text-slate-950">
+              <h2
+                className={`mt-1 font-semibold text-slate-950 ${
+                  dense ? "text-xl" : "text-2xl"
+                }`}
+              >
                 {title}
               </h2>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-                {description}
-              </p>
+              {description ? (
+                <p
+                  className={`max-w-3xl text-sm text-slate-600 ${
+                    dense ? "mt-1 leading-5" : "mt-2 leading-6"
+                  }`}
+                >
+                  {description}
+                </p>
+              ) : null}
             </div>
             {action ? (
               <Link
-                className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-medium text-white hover:bg-slate-800"
+                className={`inline-flex items-center justify-center rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 ${
+                  dense ? "h-9" : "h-10"
+                }`}
                 href={action.href}
               >
                 {action.label}

@@ -2,11 +2,17 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import {
+  buildEmailTemplateContext,
+  getEmailTemplate,
+  renderEmailTemplate,
+} from "@/lib/email-templates";
+import {
   EmailDraftStatus,
   EmailLanguage,
   EmailTone,
   LeadPriority,
   LeadStatus,
+  SentEmailStatus,
 } from "@/lib/generated/prisma/client";
 
 export const runtime = "nodejs";
@@ -25,7 +31,7 @@ export async function POST(request: Request) {
         {
           error: {
             code: "VALIDATION_ERROR",
-            message: "Please provide a company id.",
+            message: "会社IDを指定してください。",
           },
         },
         { status: 400 },
@@ -37,14 +43,25 @@ export async function POST(request: Request) {
       include: {
         contacts: {
           orderBy: { updatedAt: "desc" },
-          take: 1,
+          take: 5,
         },
         leads: {
           orderBy: { updatedAt: "desc" },
           take: 1,
           include: {
+            contact: true,
             emailDrafts: {
+              where: {
+                status: {
+                  in: [EmailDraftStatus.DRAFT, EmailDraftStatus.APPROVED],
+                },
+              },
               orderBy: { updatedAt: "desc" },
+              take: 1,
+            },
+            sentEmails: {
+              where: { status: SentEmailStatus.SENT },
+              orderBy: { sentAt: "desc" },
               take: 1,
             },
           },
@@ -61,7 +78,7 @@ export async function POST(request: Request) {
         {
           error: {
             code: "COMPANY_NOT_FOUND",
-            message: "Company was not found.",
+            message: "会社が見つかりませんでした。",
           },
         },
         { status: 404 },
@@ -85,31 +102,34 @@ export async function POST(request: Request) {
       return NextResponse.json({ data: existingLead.emailDrafts[0] });
     }
 
-    const contact = company.contacts[0];
+    const contact = lead.contact ?? company.contacts[0];
     const research = company.research[0];
-    const recipientName = contact?.name?.split(" ")[0] ?? "there";
-    const subject = `Idea for ${company.name || "your team"}`;
-    const angle =
-      research?.salesOpportunities[0] ??
-      company.description ??
-      "a small workflow improvement";
+    const previousSent = existingLead?.sentEmails[0] ?? null;
+    const recipientName = contact?.name?.split(/\s+/)[0] ?? "ご担当者";
+    const isFollowUp = Boolean(previousSent);
+
+    const draftContent = buildDraftContent({
+      companyName: company.name,
+      recipientName,
+      industry: company.industry,
+      location: company.location,
+      websiteUrl: company.websiteUrl,
+      companyDescription: company.description,
+      painPoints: research?.painPoints,
+      salesOpportunities: research?.salesOpportunities,
+      researchSummary: research?.summary,
+      isFollowUp,
+      previousSubject: previousSent?.subject,
+    });
 
     const draft = await prisma.emailDraft.create({
       data: {
         leadId: lead.id,
         contactId: contact?.id,
-        subject,
-        body: [
-          `Hello ${recipientName},`,
-          "",
-          `I noticed ${company.name || "your company"} may have an opportunity around ${angle.toLowerCase()}.`,
-          "",
-          "Would it be useful to compare a small, practical improvement idea?",
-          "",
-          "Best regards,",
-        ].join("\n"),
-        tone: EmailTone.PROFESSIONAL,
-        language: EmailLanguage.EN,
+        subject: draftContent.subject,
+        body: draftContent.body,
+        tone: draftContent.tone,
+        language: draftContent.language,
         status: EmailDraftStatus.DRAFT,
       },
     });
@@ -123,10 +143,92 @@ export async function POST(request: Request) {
           message:
             error instanceof Error
               ? error.message
-              : "Could not create email draft.",
+              : "下書きを作成できませんでした。",
         },
       },
       { status: 500 },
     );
   }
+}
+
+function buildDraftContent({
+  companyName,
+  recipientName,
+  industry,
+  location,
+  websiteUrl,
+  companyDescription,
+  painPoints,
+  salesOpportunities,
+  researchSummary,
+  isFollowUp,
+  previousSubject,
+}: {
+  companyName: string;
+  recipientName: string;
+  industry?: string | null;
+  location?: string | null;
+  websiteUrl?: string | null;
+  companyDescription?: string | null;
+  painPoints?: string[];
+  salesOpportunities?: string[];
+  researchSummary?: string | null;
+  isFollowUp: boolean;
+  previousSubject?: string | null;
+}) {
+  if (isFollowUp) {
+    const name = companyName.trim() || "御社";
+    return {
+      subject: `【ご連絡】${name} フォローアップ`,
+      body: [
+        `${recipientName} 様`,
+        "",
+        "先日お送りしたメールの件で、改めてご連絡いたしました。",
+        ...(previousSubject ? [`（件名: ${previousSubject}）`, ""] : []),
+        "ご都合のよいタイミングで、短くご確認いただけますと幸いです。",
+        "",
+        researchSummary?.trim()
+          ? `補足メモ:\n${researchSummary.trim()}`
+          : "必要であれば、具体的な改善ポイントを短くお送りします。",
+        "",
+        "何卒よろしくお願いいたします。",
+      ].join("\n"),
+      tone: EmailTone.PROFESSIONAL,
+      language: EmailLanguage.JA,
+    };
+  }
+
+  const template = getEmailTemplate("intro-quick-audit");
+  if (template) {
+    const rendered = renderEmailTemplate(
+      template,
+      buildEmailTemplateContext({
+        companyName,
+        recipientName,
+        industry,
+        location,
+        websiteUrl,
+        companyDescription,
+        painPoints,
+        salesOpportunities,
+      }),
+    );
+    return rendered;
+  }
+
+  const name = companyName.trim() || "御社";
+  return {
+    subject: `${name}についてご相談`,
+    body: [
+      `${recipientName} 様`,
+      "",
+      `${name}について、業務改善のご提案がありご連絡しました。`,
+      "",
+      "短いご提案をお送りしてもよろしいでしょうか。",
+      "",
+      "何卒よろしくお願いいたします。",
+    ].join("\n"),
+    tone: EmailTone.PROFESSIONAL,
+    language: EmailLanguage.JA,
+  };
 }

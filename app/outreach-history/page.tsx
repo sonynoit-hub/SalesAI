@@ -120,17 +120,16 @@ export default async function OutreachHistoryPage() {
                       tags: email.lead.tags,
                       events: eventMap.get(email.leadId) ?? null,
                     });
-                    const contactLabel = contactActivity.hasPhoneContact
-                      ? "架電済み"
-                      : contactActivity.hasEmailContact
-                        ? "メール送信"
-                        : null;
+                    const contactLabels = [
+                      contactActivity.hasEmailContact ? "メール送信" : null,
+                      contactActivity.hasPhoneContact ? "架電済み" : null,
+                    ].filter((value): value is string => Boolean(value));
 
                     return (
                       <tr key={email.id} className="align-top hover:bg-slate-50/70">
                         <td className="px-4 py-3">
                           <Link
-                            className="font-medium text-slate-950 hover:text-emerald-700"
+                            className="font-medium text-slate-950 hover:text-blue-600"
                             href={companyHref}
                           >
                             {companyName}
@@ -154,17 +153,22 @@ export default async function OutreachHistoryPage() {
                           <Badge tone={statusTone(email.status.toLowerCase())}>
                             {sentStatusJa(email.status)}
                           </Badge>
-                          {contactLabel ? (
-                            <p
-                              className="mt-1 inline-flex h-7 items-center whitespace-nowrap rounded-md border border-sky-200 bg-sky-50 px-2 text-xs font-medium text-sky-700"
-                            >
-                              {contactLabel}
-                            </p>
+                          {contactLabels.length > 0 ? (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {contactLabels.map((label) => (
+                                <p
+                                  className="inline-flex h-7 items-center whitespace-nowrap rounded-md border border-sky-200 bg-sky-50 px-2 text-xs font-medium text-sky-700"
+                                  key={label}
+                                >
+                                  {label}
+                                </p>
+                              ))}
+                            </div>
                           ) : null}
                         </td>
                         <td className="px-4 py-3 text-right">
                           <Link
-                            className="text-sm font-medium text-emerald-700 hover:text-emerald-800"
+                            className="text-sm font-medium text-blue-600 hover:text-blue-800"
                             href={companyHref}
                           >
                             詳細

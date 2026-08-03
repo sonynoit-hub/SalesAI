@@ -19,10 +19,6 @@ export const LEAD_TAG_EMAIL_CONTACTED = "contact:email";
 export const LEAD_TAG_PHONE_CONTACTED = "contact:phone";
 export const LEAD_TAG_EMAIL_REPLIED = "reply:email";
 
-export function mergeLeadTags(existing: string[] | null | undefined, add: string[]) {
-  return Array.from(new Set([...(existing ?? []), ...add]));
-}
-
 export function hasLeadTag(tags: string[] | null | undefined, tag: string) {
   return (tags ?? []).some((value) => value === tag || value.startsWith(`${tag}@`));
 }

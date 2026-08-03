@@ -47,7 +47,7 @@ async function generateWithOllama(request: SearchAnalyzeRequest) {
     "Create diverse search angles and exact web search queries that can find different real prospect companies.",
     "Prospects must be company websites, company profile pages, or official corporate pages.",
     "Avoid directories, job boards, news articles, reports, marketplaces, and vendor articles.",
-    "If the target is Japan or the keyword is Japanese, include Japanese queries.",
+    "If the target is Japan or the keyword is Japanese, include Japanese queries and Japanese exclude keywords.",
     "Return only valid JSON. Do not include markdown.",
     "",
     `Reference keyword: ${request.referenceKeyword}`,

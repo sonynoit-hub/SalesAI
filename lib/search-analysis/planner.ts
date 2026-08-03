@@ -3,6 +3,7 @@ import type {
   OpportunitySearchPlan,
   SearchIntent,
 } from "@/lib/search-analysis/types";
+import { formatIndustryJa } from "@/lib/industries";
 
 type OllamaChatResponse = {
   message?: {
@@ -375,14 +376,7 @@ function mapJapaneseOpportunityTerms(value: string) {
 }
 
 function localizeIndustry(industry: string) {
-  const normalized = industry.toLowerCase();
-
-  if (normalized.includes("manufactur")) return "製造業";
-  if (normalized.includes("logistics")) return "物流";
-  if (normalized.includes("construction")) return "建設業";
-  if (normalized.includes("retail")) return "小売";
-
-  return industry;
+  return formatIndustryJa(industry) || industry;
 }
 
 function localizeLocation(location: string) {

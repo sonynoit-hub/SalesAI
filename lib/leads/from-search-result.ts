@@ -4,11 +4,11 @@ import {
   normalizeCompanyWebsiteUrl,
 } from "@/lib/company-identity";
 import { prisma } from "@/lib/db/prisma";
+import { formatIndustryJa } from "@/lib/industries";
 import {
   CompanySource,
   LeadPriority,
   LeadStatus,
-  type Prisma,
   SearchSource,
 } from "@/lib/generated/prisma/client";
 
@@ -51,10 +51,12 @@ export async function saveLeadFromSearchResult(input: SaveLeadFromSearchResultIn
     });
     const companyData = {
       name: input.companyName,
-      industry: input.industry || undefined,
+      industry: formatIndustryJa(input.industry) || undefined,
       location: input.location || undefined,
       size: input.size || undefined,
       description: input.description || input.aiOpportunity || undefined,
+      primaryEmail: input.publicEmail || undefined,
+      contactFormUrl: input.contactFormUrl || undefined,
       canonicalWebsiteUrl: identity?.canonicalWebsiteUrl,
       normalizedDomain: identity?.normalizedDomain,
       companyKey: identity?.companyKey,
@@ -91,33 +93,17 @@ export async function saveLeadFromSearchResult(input: SaveLeadFromSearchResultIn
         savedAsCompanyId: company.id,
       },
     });
-    const contact = input.publicEmail
-      ? await upsertCompanyContact({
-          companyId: company.id,
-          email: input.publicEmail,
-          sourceUrl: input.contactFormUrl ?? sourceUrl,
-          tx,
-        })
-      : null;
 
     const existingLead = await tx.lead.findFirst({
       where: { companyId: company.id },
       orderBy: { updatedAt: "desc" },
     });
 
-    if (existingLead && contact && !existingLead.contactId) {
-      await tx.lead.update({
-        where: { id: existingLead.id },
-        data: { contactId: contact.id },
-      });
-    }
-
     const lead =
       existingLead ??
       (await tx.lead.create({
         data: {
           companyId: company.id,
-          contactId: contact?.id,
           status: LeadStatus.NEW,
           priority: LeadPriority.MEDIUM,
           tags: buildTags(input),
@@ -141,46 +127,11 @@ export async function saveLeadFromSearchResult(input: SaveLeadFromSearchResultIn
 
     return {
       company,
-      contact,
       lead,
       searchResult,
       createdCompany: !existingCompany,
       createdLead: !existingLead,
     };
-  });
-}
-
-async function upsertCompanyContact({
-  companyId,
-  email,
-  sourceUrl,
-  tx,
-}: {
-  companyId: string;
-  email: string;
-  sourceUrl: string;
-  tx: Prisma.TransactionClient;
-}) {
-  const existingContact = await tx.contact.findFirst({
-    where: {
-      companyId,
-      email,
-    },
-  });
-
-  if (existingContact) {
-    return tx.contact.update({
-      where: { id: existingContact.id },
-      data: { sourceUrl },
-    });
-  }
-
-  return tx.contact.create({
-    data: {
-      companyId,
-      email,
-      sourceUrl,
-    },
   });
 }
 

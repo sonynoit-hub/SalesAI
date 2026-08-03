@@ -13,6 +13,7 @@ import { WorkflowActionButton } from "@/components/workflow-action-button";
 import { formatIndustryJa } from "@/lib/industries";
 import { getLatestContactEventsByLeadIds } from "@/lib/leads/contact-events";
 import { deriveLeadContactActivity } from "@/lib/leads/contact-activity";
+import { leadStatusLabelJa } from "@/lib/leads/status";
 import {
   type CompanyQueueRow,
   formatDate,
@@ -28,21 +29,6 @@ type CompanyDetailPageProps = {
     companyId: string;
   }>;
 };
-
-function leadStatusJa(value: string) {
-  const map: Record<string, string> = {
-    NEW: "新規",
-    RESEARCHED: "調査済み",
-    QUALIFIED: "見込みあり",
-    CONTACTED: "連絡済み",
-    REPLIED: "返信あり",
-    FOLLOW_UP: "フォロー中",
-    MEETING: "商談中",
-    WON: "受注",
-    LOST: "失注",
-  };
-  return map[value.toUpperCase()] ?? value.toLowerCase();
-}
 
 type WorkflowAction =
   | {
@@ -131,13 +117,13 @@ export default async function CompanyDetailPage({
     row.latestSentEmail?.status === "SENT";
   const activityMeta = [
     contactActivity.emailContactedAt
-      ? `メール送信 ${formatDateTime(contactActivity.emailContactedAt)}`
+      ? `メール ${formatDateTime(contactActivity.emailContactedAt)}`
       : null,
     contactActivity.phoneContactedAt
       ? `架電 ${formatDateTime(contactActivity.phoneContactedAt)}`
       : null,
     contactActivity.emailRepliedAt
-      ? `返信受信 ${formatDateTime(contactActivity.emailRepliedAt)}`
+      ? `返信 ${formatDateTime(contactActivity.emailRepliedAt)}`
       : null,
     row.company.savedAt ? `保存日 ${formatDate(row.company.savedAt)}` : null,
   ].filter((value): value is string => Boolean(value));
@@ -161,7 +147,7 @@ export default async function CompanyDetailPage({
               </Badge>
               {row.primaryLead ? (
                 <Badge tone="slate">
-                  リード: {leadStatusJa(row.primaryLead.status)}
+                  リード: {leadStatusLabelJa(row.primaryLead.status)}
                 </Badge>
               ) : null}
               {contactActivity.hasEmailContact ? <Badge tone="sky">メール送信</Badge> : null}
@@ -223,7 +209,7 @@ export default async function CompanyDetailPage({
                 ) : null}
                 {row.company.contactFormUrl ? (
                   <a
-                    className="mt-1 block truncate text-xs text-emerald-700 hover:text-emerald-800"
+                    className="mt-1 block truncate text-xs text-blue-600 hover:text-blue-800"
                     href={row.company.contactFormUrl}
                     rel="noreferrer"
                     target="_blank"
@@ -293,7 +279,7 @@ export default async function CompanyDetailPage({
               ) : null}
               {row.latestSentEmail?.status === "SENT" ? (
                 <Link
-                  className="inline-flex text-xs font-medium text-emerald-700 hover:text-emerald-800"
+                  className="inline-flex text-xs font-medium text-blue-600 hover:text-blue-800"
                   href="/outreach-history"
                 >
                   送信履歴を見る

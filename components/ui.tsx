@@ -17,7 +17,7 @@ export function Badge({
 }) {
   return (
     <span
-      className={`inline-flex h-7 items-center rounded-md border px-2 text-xs font-medium ${badgeTones[tone]}`}
+      className={`inline-flex h-7 items-center whitespace-nowrap rounded-md border px-2 text-xs font-medium ${badgeTones[tone]}`}
     >
       {children}
     </span>
@@ -45,25 +45,67 @@ export function MetricCard({
 export function SectionCard({
   title,
   children,
+  compact = false,
+  className = "",
 }: {
   title: string;
   children: React.ReactNode;
+  compact?: boolean;
+  className?: string;
 }) {
   return (
-    <section className="rounded-md border border-slate-200 bg-white p-5">
-      <h3 className="text-base font-semibold text-slate-950">{title}</h3>
-      <div className="mt-4">{children}</div>
+    <section
+      className={`flex flex-col rounded-md border border-slate-200 bg-white shadow-sm ${
+        compact ? "p-3" : "p-5"
+      } ${className}`}
+    >
+      <h3
+        className={`font-semibold text-slate-950 ${
+          compact ? "text-sm" : "text-base"
+        }`}
+      >
+        {title}
+      </h3>
+      <div
+        className={`flex min-h-0 flex-1 flex-col ${compact ? "mt-2" : "mt-4"}`}
+      >
+        {children}
+      </div>
     </section>
   );
 }
 
 export function statusTone(status: string): BadgeTone {
-  if (["contacted", "replied", "won", "sent", "done"].includes(status)) {
+  if (
+    ["contacted", "replied", "won", "sent", "done", "active"].includes(status)
+  ) {
     return "emerald";
   }
-  if (["researched", "qualified", "follow_up", "approved", "open"].includes(status)) {
+  if (
+    [
+      "researched",
+      "qualified",
+      "follow_up",
+      "approved",
+      "open",
+      "contact ready",
+      "follow-up due",
+    ].includes(status)
+  ) {
     return "sky";
   }
-  if (["new", "draft"].includes(status)) return "amber";
+  if (
+    [
+      "new",
+      "draft",
+      "needs research",
+      "needs draft",
+      "draft ready",
+      "can follow-up",
+    ].includes(status)
+  ) {
+    return "amber";
+  }
+  if (["failed", "skipped"].includes(status)) return "rose";
   return "slate";
 }

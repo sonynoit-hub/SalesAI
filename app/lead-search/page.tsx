@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui";
+import { formatIndustryJa } from "@/lib/industries";
 import { workflowSteps } from "@/lib/navigation";
 import { MAX_TARGET_COMPANY_COUNT } from "@/lib/search-analysis/constants";
 import type {
@@ -50,9 +51,9 @@ export default function LeadSearchPage() {
   const [industry, setIndustry] = useState("");
   const [location, setLocation] = useState("");
   const [excludeKeywords, setExcludeKeywords] = useState(
-    "jobs, careers, directory, news",
+    "求人, 採用, ニュース, 記事, ディレクトリ",
   );
-  const [resultLimit, setResultLimit] = useState(5);
+  const [resultLimit, setResultLimit] = useState(20);
   const [results, setResults] = useState<OpportunityResult[]>([]);
   const [analysisMeta, setAnalysisMeta] = useState<SearchAnalyzeResponse["meta"] | null>(
     null,
@@ -63,21 +64,13 @@ export default function LeadSearchPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [savingResultId, setSavingResultId] = useState<string | null>(null);
   const [savedResultIds, setSavedResultIds] = useState<string[]>([]);
-  const [autoSaveResults, setAutoSaveResults] = useState(false);
-  const [autoSaveStatus, setAutoSaveStatus] = useState<string | null>(null);
-  const [showSeenCompanies, setShowSeenCompanies] = useState(true);
-  const [showSavedCompanies, setShowSavedCompanies] = useState(true);
   const [saveReview, setSaveReview] = useState<SavedLeadReview | null>(null);
   const parsedExcludeKeywords = excludeKeywords
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
   const canAnalyze = referenceKeyword.trim().length >= 2;
-  const visibleResults = results.filter((result) => {
-    if (result.databaseStatus?.state === "saved") return showSavedCompanies;
-    if (result.databaseStatus?.state === "seen") return showSeenCompanies;
-    return true;
-  });
+  const visibleResults = results;
 
   useEffect(() => {
     if (!isAnalyzing) {
@@ -103,7 +96,6 @@ export default function LeadSearchPage() {
     setIsAnalyzing(true);
     setAnalysisElapsedSeconds(0);
     setAnalysisStatus("Searching company websites...");
-    setAutoSaveStatus(null);
     setErrorMessage(null);
 
     try {
@@ -135,10 +127,6 @@ export default function LeadSearchPage() {
       setResults(data.results);
       setAnalysisMeta(data.meta);
       setAnalysisStatus(null);
-
-      if (autoSaveResults) {
-        await autoSaveSearchResults(data.results);
-      }
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -168,44 +156,6 @@ export default function LeadSearchPage() {
           ? error.message
           : "Could not save this company as a lead.",
       );
-    } finally {
-      setSavingResultId(null);
-    }
-  }
-
-  async function autoSaveSearchResults(searchResults: OpportunityResult[]) {
-    const saveableResults = searchResults.filter(
-      (result) =>
-        result.websiteUrl &&
-        result.databaseStatus?.state !== "saved" &&
-        !savedResultIds.includes(result.id),
-    );
-
-    if (saveableResults.length === 0) {
-      setAutoSaveStatus("No new company results needed saving.");
-      return;
-    }
-
-    setAutoSaveStatus(`Auto-saving ${saveableResults.length} company results...`);
-    setSavingResultId("auto-save");
-
-    let savedCount = 0;
-
-    try {
-      for (const result of saveableResults) {
-        try {
-          await saveSearchResult(result, { showReview: false });
-          savedCount += 1;
-        } catch (error) {
-          setErrorMessage(
-            error instanceof Error
-              ? error.message
-              : "Auto-save failed for one company result.",
-          );
-        }
-      }
-
-      setAutoSaveStatus(`Auto-saved ${savedCount} company results.`);
     } finally {
       setSavingResultId(null);
     }
@@ -318,9 +268,9 @@ export default function LeadSearchPage() {
           </div>
           <Link
             className="h-10 rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            href="/search-goals"
+            href="/leads"
           >
-            Search History
+            Open leads
           </Link>
         </header>
 
@@ -381,7 +331,7 @@ export default function LeadSearchPage() {
               <input
                 className="mt-2 h-11 w-full rounded-md border border-slate-300 bg-white px-3 text-xs font-medium text-slate-700 outline-none"
                 onChange={(event) => setExcludeKeywords(event.currentTarget.value)}
-                placeholder="jobs, news, directory"
+                placeholder="求人, ニュース, 会社概要"
                 value={excludeKeywords}
               />
             </label>
@@ -416,25 +366,13 @@ export default function LeadSearchPage() {
             <div className="pt-7">
               <button
                 className="h-11 w-full rounded-md bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                disabled={isAnalyzing || savingResultId === "auto-save"}
+                disabled={isAnalyzing}
                 type="submit"
               >
                 {isAnalyzing ? "Searching..." : "Search Companies"}
               </button>
-              <label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-600">
-                <input
-                  checked={autoSaveResults}
-                  className="mt-1"
-                  disabled={isAnalyzing || savingResultId === "auto-save"}
-                  onChange={(event) => setAutoSaveResults(event.currentTarget.checked)}
-                  type="checkbox"
-                />
-                <span>Auto-save new search results to CRM</span>
-              </label>
               <p className="mx-auto mt-3 max-w-44 text-center text-xs leading-5 text-slate-500">
-                {savingResultId === "auto-save"
-                  ? autoSaveStatus ?? "Auto-saving results..."
-                  : isAnalyzing
+                {isAnalyzing
                   ? `${analysisStatus ?? "Working..."} ${analysisElapsedSeconds}s`
                   : analysisStatus ??
                     "Search will keep company pages and filter non-company junk"}
@@ -479,13 +417,10 @@ export default function LeadSearchPage() {
         ) : null}
 
         {analysisMeta ? (
-          <section className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
-            <div>
-              <h2 className="text-base font-semibold text-slate-950">
-                AI Analysis Strategy
-              </h2>
-            </div>
-
+          <details className="rounded-md border border-slate-200 bg-white p-5 shadow-sm">
+            <summary className="cursor-pointer text-base font-semibold text-slate-950">
+              Search details
+            </summary>
             <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_1fr_1.2fr]">
               <div>
                 <h3 className="text-sm font-semibold text-slate-800">
@@ -595,7 +530,7 @@ export default function LeadSearchPage() {
                 ) : null}
               </div>
             </div>
-          </section>
+          </details>
         ) : null}
 
         <section>
@@ -619,42 +554,11 @@ export default function LeadSearchPage() {
                 <Badge tone="slate">Target {analysisMeta.resultLimit}</Badge>
               ) : null}
               {analysisMeta?.searchGoal ? (
-                <Badge
-                  tone={
-                    analysisMeta.searchGoal.status === "COMPLETED"
-                      ? "emerald"
-                      : analysisMeta.searchGoal.status === "PARTIAL"
-                        ? "amber"
-                        : "slate"
-                  }
-                >
-                  {analysisMeta.searchGoal.status.toLowerCase()}{" "}
+                <Badge tone="slate">
                   {analysisMeta.searchGoal.foundCompanyCount}/
                   {analysisMeta.searchGoal.targetCompanyCount}
                 </Badge>
               ) : null}
-              <label className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 font-medium text-slate-700">
-                <input
-                  checked={showSeenCompanies}
-                  onChange={(event) => setShowSeenCompanies(event.currentTarget.checked)}
-                  type="checkbox"
-                />
-                Seen
-              </label>
-              <label className="flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 font-medium text-slate-700">
-                <input
-                  checked={showSavedCompanies}
-                  onChange={(event) => setShowSavedCompanies(event.currentTarget.checked)}
-                  type="checkbox"
-                />
-                Saved
-              </label>
-              <button className="h-9 rounded-md border border-slate-200 bg-white px-3 font-medium text-slate-700">
-                Filters
-              </button>
-              <button className="h-9 rounded-md border border-slate-200 bg-white px-3 font-medium text-slate-700">
-                Export
-              </button>
             </div>
           </div>
 
@@ -721,7 +625,7 @@ export default function LeadSearchPage() {
                       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                         Industry
                       </p>
-                      <p className="mt-1">{result.industry || "Unknown"}</p>
+                      <p className="mt-1">{formatIndustryJa(result.industry) || "未設定"}</p>
                     </div>
 
                     <div className="sm:col-span-3">

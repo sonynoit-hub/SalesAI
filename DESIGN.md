@@ -2,9 +2,9 @@
 
 ## 1. App Purpose
 
-SalesAI helps an IT salesperson find potential customers from public web sources, research those companies, qualify fit, generate personalized outreach, send emails through Gmail, and track replies and follow-up work.
+SalesAI helps an IT salesperson find potential customers from public web sources, research those companies, generate personalized outreach, send emails through Gmail, and track replies and follow-up work.
 
-The app should focus on one practical AI-assisted outreach workflow first, not a large enterprise CRM. Lead, research, and qualification records are internal system memory; the primary user experience should feel like an AI outreach queue.
+The app should focus on one practical AI-assisted outreach workflow first, not a large enterprise CRM. Lead and research records are internal system memory; the primary user experience should feel like an AI outreach queue.
 
 ## 2. Target User
 
@@ -19,21 +19,21 @@ The first version of the app focuses on this workflow:
 
 1. Search companies from public web sources.
 2. Research each company website and collect useful sales context.
-3. Qualify each company based on fit, need, and contactability.
-4. Generate a personalized outreach email.
-5. Review or approve sending through Gmail.
-6. Track sent emails, replies, lead status, and follow-up reminders.
+3. Confirm the active outreach contact for the company.
+4. Generate a personalized outreach email draft.
+5. Review, approve, and send through Gmail or a manual send step.
+6. Track sent emails, lead status, and follow-up reminders.
 
 Short version:
 
 ```text
-Search companies -> AI review -> approve/send Gmail -> track replies -> follow up
+Search companies -> research -> contact ready -> draft -> approve/send -> follow up
 ```
 
 Internal workflow:
 
 ```text
-Company -> CompanyResearch -> LeadQualification -> Lead -> EmailDraft -> SentEmail -> FollowUpTask
+Company -> CompanyResearch -> Contact -> Lead -> EmailDraft -> SentEmail -> FollowUpTask
 ```
 
 ## 4. Main Pages
@@ -70,10 +70,11 @@ Recommended status values:
 In the UI, lead statuses may be grouped into outreach-oriented AI states:
 
 - `Needs research`
-- `Needs qualification`
+- `Contact ready`
 - `Needs draft`
-- `Ready to send`
-- `Tracking reply`
+- `Draft ready`
+- `Approved`
+- `Sent`
 - `Follow-up due`
 - `Closed`
 
@@ -165,26 +166,6 @@ type Lead = {
   notes?: string;
   createdAt: string;
   updatedAt: string;
-};
-```
-
-### LeadQualification
-
-Stores why a lead is good or bad.
-
-```ts
-type LeadQualification = {
-  id: string;
-  leadId: string;
-  fitScore: number;
-  needScore: number;
-  contactabilityScore: number;
-  totalScore: number;
-  rating: "cold" | "warm" | "hot";
-  reasons: string[];
-  risks: string[];
-  suggestedApproach?: string;
-  createdAt: string;
 };
 ```
 

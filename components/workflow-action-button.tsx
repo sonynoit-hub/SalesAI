@@ -5,14 +5,16 @@ import { useState } from "react";
 
 type WorkflowActionButtonProps = {
   companyId: string;
-  endpoint: "/api/company-research" | "/api/email-drafts";
+  endpoint: "/api/company-enrichment" | "/api/email-drafts";
   label: string;
+  redirectTo?: string;
 };
 
 export function WorkflowActionButton({
   companyId,
   endpoint,
   label,
+  redirectTo,
 }: WorkflowActionButtonProps) {
   const router = useRouter();
   const [isWorking, setIsWorking] = useState(false);
@@ -36,14 +38,20 @@ export function WorkflowActionButton({
 
       if (!response.ok) {
         throw new Error(
-          payload?.error?.message ?? "Could not complete this action.",
+          payload?.error?.message ?? "操作を完了できませんでした。",
         );
+      }
+
+      if (redirectTo) {
+        router.push(redirectTo);
+        router.refresh();
+        return;
       }
 
       router.refresh();
     } catch (error) {
       setErrorMessage(
-        error instanceof Error ? error.message : "Could not complete this action.",
+        error instanceof Error ? error.message : "操作を完了できませんでした。",
       );
     } finally {
       setIsWorking(false);
@@ -53,12 +61,12 @@ export function WorkflowActionButton({
   return (
     <div className="space-y-1">
       <button
-        className="inline-flex h-9 w-full items-center justify-center rounded-md bg-slate-950 px-3 text-xs font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+        className="inline-flex h-10 w-full items-center justify-center rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
         disabled={isWorking}
         onClick={handleClick}
         type="button"
       >
-        {isWorking ? "Working..." : label}
+        {isWorking ? "処理中…" : label}
       </button>
       {errorMessage ? (
         <p className="text-xs leading-5 text-rose-600">{errorMessage}</p>

@@ -1,127 +1,72 @@
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
-import { Badge, SectionCard, statusTone } from "@/components/ui";
-import { getCompanyQueueRows, statusLabel } from "@/lib/db/sales-workflow";
+import { DatabaseUnavailable } from "@/components/database-unavailable";
+import { DraftReviewCard } from "@/components/draft-review-card";
+import { SectionCard } from "@/components/ui";
+import { safeGetCompanyQueueRows } from "@/lib/db/sales-workflow";
+import { getDeliveryOptions } from "@/lib/outreach/send-email";
 
 export const dynamic = "force-dynamic";
 
 export default async function EmailComposerPage() {
-  const rows = await getCompanyQueueRows();
+  const loaded = await safeGetCompanyQueueRows();
+  if (!loaded.ok) {
+    return <DatabaseUnavailable eyebrow="メール承認" message={loaded.message} />;
+  }
+
+  const rows = loaded.rows;
+  const deliveryOptions = getDeliveryOptions();
   const draftRows = rows.filter((row) => row.latestDraft);
-  const leadRows = rows.filter((row) => row.primaryLead);
 
   return (
     <AppShell
-      eyebrow="Email approval"
-      title="Draft Review"
-      description="Review stored outreach drafts from PostgreSQL before Gmail sending is connected."
+      eyebrow="メール承認"
+      title="下書きレビュー"
+      description="会社ごとの下書きを確認・編集して、承認後に送信します。"
     >
-      <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
-        <SectionCard title="Draft context">
-          <div className="space-y-4">
-            <label className="block text-sm">
-              <span className="font-medium text-slate-700">Lead</span>
-              <select className="mt-1 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900">
-                {leadRows.map((row) => (
-                  <option key={row.primaryLead?.id}>
-                    {row.company.name || "Unnamed company"}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-700">
-              Draft creation and approval actions will be wired to APIs next.
-              This page currently shows records already stored in PostgreSQL.
-            </div>
+      <div className="space-y-3">
+        {draftRows.length > 0 ? (
+          draftRows.map((row) => {
+            const draft = row.latestDraft;
+            if (!draft) return null;
+
+            return (
+              <SectionCard key={draft.id} title={draft.subject}>
+                <DraftReviewCard
+                  companyName={row.company.name || "未命名の会社"}
+                  draft={{
+                    id: draft.id,
+                    subject: draft.subject,
+                    body: draft.body,
+                    status: draft.status,
+                    tone: draft.tone,
+                    language: draft.language,
+                  }}
+                  outreachEmail={row.outreachEmail ?? null}
+                  deliveryOptions={deliveryOptions}
+                />
+                <Link
+                  className="mt-2 inline-flex text-sm font-medium text-blue-600 hover:text-blue-800"
+                  href={`/companies/${row.company.id}`}
+                >
+                  会社詳細を開く
+                </Link>
+              </SectionCard>
+            );
+          })
+        ) : (
+          <SectionCard title="下書きなし">
+            <p className="text-sm text-slate-600">
+              メール下書きはまだありません。会社詳細の「下書きを作成」または「フォローメールを作成」から作成できます。
+            </p>
             <Link
-              className="flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-medium text-white hover:bg-slate-800"
-              href="/companies"
+              className="mt-3 inline-flex text-sm font-medium text-blue-600 hover:text-blue-800"
+              href="/leads"
             >
-              Back to AI Queue
+              リード一覧へ
             </Link>
-          </div>
-        </SectionCard>
-
-        <div className="space-y-4">
-          {draftRows.length > 0 ? (
-            draftRows.map((row) => {
-              const draft = row.latestDraft;
-
-              if (!draft) return null;
-
-              return (
-                <SectionCard key={draft.id} title={draft.subject}>
-                  <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
-                    <div>
-                      <div className="mb-4 flex flex-wrap items-center gap-2">
-                        <Badge tone={statusTone(statusLabel(draft.status))}>
-                          {statusLabel(draft.status)}
-                        </Badge>
-                        <Badge>{statusLabel(draft.tone)}</Badge>
-                        <Badge>{statusLabel(draft.language)}</Badge>
-                        <span className="text-sm text-slate-500">
-                          {row.company.name || "Unnamed company"} ·{" "}
-                          {row.primaryContact?.email ?? "No email"}
-                        </span>
-                      </div>
-                      <label className="block text-sm">
-                        <span className="font-medium text-slate-700">Subject</span>
-                        <input
-                          className="mt-1 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900"
-                          defaultValue={draft.subject}
-                          readOnly
-                        />
-                      </label>
-                      <label className="mt-3 block text-sm">
-                        <span className="font-medium text-slate-700">Body</span>
-                        <textarea
-                          className="mt-1 min-h-64 w-full rounded-md border border-slate-300 bg-white p-4 text-sm leading-6 text-slate-800"
-                          defaultValue={draft.body}
-                          readOnly
-                        />
-                      </label>
-                    </div>
-                    <aside className="rounded-md border border-slate-200 bg-slate-50 p-4">
-                      <p className="text-sm font-semibold text-slate-950">
-                        Readiness
-                      </p>
-                      <div className="mt-3 space-y-2 text-sm">
-                        {[
-                          ["Research", Boolean(row.research)],
-                          ["Lead", Boolean(row.primaryLead)],
-                          ["Recipient", Boolean(row.primaryContact?.email)],
-                          ["Draft", true],
-                        ].map(([item, ok]) => (
-                          <div
-                            className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2"
-                            key={String(item)}
-                          >
-                            <span className="text-slate-600">{item}</span>
-                            <Badge tone={ok ? "emerald" : "amber"}>
-                              {ok ? "ok" : "missing"}
-                            </Badge>
-                          </div>
-                        ))}
-                      </div>
-                      <Link
-                        className="mt-4 inline-flex text-sm font-medium text-emerald-700 hover:text-emerald-800"
-                        href={`/companies/${row.company.id}`}
-                      >
-                        Open company detail
-                      </Link>
-                    </aside>
-                  </div>
-                </SectionCard>
-              );
-            })
-          ) : (
-            <SectionCard title="No drafts">
-              <p className="text-sm text-slate-600">
-                No email draft records exist in PostgreSQL yet.
-              </p>
-            </SectionCard>
-          )}
-        </div>
+          </SectionCard>
+        )}
       </div>
     </AppShell>
   );

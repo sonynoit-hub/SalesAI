@@ -13,7 +13,10 @@ import {
   extractHomepageVerification,
   verifyHomepageCandidates,
 } from "@/lib/search-analysis/strict-public-search";
-import type { SearchAnalyzeRequest } from "@/lib/search-analysis/schemas";
+import {
+  searchAnalyzeRequestSchema,
+  type SearchAnalyzeRequest,
+} from "@/lib/search-analysis/schemas";
 import type { SearxngResult } from "@/lib/search-analysis/search";
 
 const vietnamItTokyoRequest: SearchAnalyzeRequest = {
@@ -27,6 +30,17 @@ const vietnamItTokyoRequest: SearchAnalyzeRequest = {
 };
 
 describe("search planning fixtures", () => {
+  it("defaults target company count to 20 when omitted", () => {
+    const parsed = searchAnalyzeRequestSchema.parse({
+      referenceKeyword: "automation",
+      industry: "IT",
+      location: "Tokyo",
+    });
+
+    assert.equal(parsed.targetCompanyCount, 20);
+    assert.equal(parsed.resultLimit, 20);
+  });
+
   it("builds Japanese queries with identity, location, industry, and official-page terms", () => {
     const searchPlan = buildFallbackSearchPlan(vietnamItTokyoRequest);
     const queries = buildSearchQueries({

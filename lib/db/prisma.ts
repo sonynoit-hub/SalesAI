@@ -7,7 +7,7 @@ const globalForPrisma = globalThis as unknown as {
   prismaSchemaVersion?: string;
 };
 
-const PRISMA_SCHEMA_VERSION = "search-campaign-fields";
+const PRISMA_SCHEMA_VERSION = "company-address-field";
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL,

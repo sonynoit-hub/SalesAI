@@ -6,6 +6,7 @@ import {
   LEAD_TAG_PHONE_CONTACTED,
 } from "@/lib/leads/constants";
 import { logContactEvent } from "@/lib/leads/contact-events";
+import { resolveLeadStatusAfterContact } from "@/lib/leads/status";
 
 export const runtime = "nodejs";
 
@@ -23,7 +24,7 @@ export async function POST(
     const { leadId } = await params;
     const lead = await prisma.lead.findUnique({
       where: { id: leadId },
-      select: { id: true, tags: true },
+      select: { id: true, status: true, tags: true },
     });
 
     if (!lead) {
@@ -42,7 +43,7 @@ export async function POST(
       const next = await tx.lead.update({
         where: { id: leadId },
         data: {
-          status: LeadStatus.CONTACTED,
+          status: resolveLeadStatusAfterContact(lead.status) as LeadStatus,
           tags: addOrReplaceLeadEventTag(lead.tags, LEAD_TAG_PHONE_CONTACTED),
         },
         select: { id: true, status: true, tags: true },

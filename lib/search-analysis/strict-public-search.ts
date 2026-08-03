@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
-import { MAX_TARGET_COMPANY_COUNT } from "@/lib/search-analysis/constants";
 import type { SearchAnalyzeRequest } from "@/lib/search-analysis/schemas";
+import { generateSearchQueryStrategy } from "@/lib/search-analysis/query-generator";
 import { applyDatabaseStatuses } from "@/lib/search-analysis/store";
 import { searchSearxng, type SearxngResult } from "@/lib/search-analysis/search";
 import type {
@@ -98,63 +98,99 @@ const BLOCKED_HOST_SUFFIXES = [
 ];
 
 const STRICT_SEARCH_BATCH_SIZE = 2;
-const STRICT_LOOKUP_BATCH_SIZE = 4;
 const HOMEPAGE_VERIFY_TIMEOUT_MS = 3_500;
 const CONTACT_PAGE_VERIFY_LIMIT = 8;
 const HOMEPAGE_ENRICH_CONCURRENCY = 6;
+const STRICT_SEARCH_ATTEMPTS = 3;
 
 export async function runStrictPublicCompanySearch(
   request: SearchAnalyzeRequest,
 ): Promise<SearchAnalyzeResponse> {
   const startedAt = Date.now();
-  const searchPlan = buildStrictSearchPlan(request);
-  const searchQueries = buildStrictSearchQueries(request);
-  const settled = await searchQueriesInBatches(searchQueries, STRICT_SEARCH_BATCH_SIZE);
-  const failed = settled.filter((result) => result.status === "rejected");
-  const firstPassResults = settled.flatMap((result) =>
-    result.status === "fulfilled" ? result.value : [],
+  const queryStrategy = await generateSearchQueryStrategy(request);
+  const searchPlan = mergeSearchPlans(
+    queryStrategy.searchPlan,
+    buildStrictSearchPlan(request),
   );
-  const seedNames = extractCompanySeedNames(firstPassResults).slice(
-    0,
-    Math.min(MAX_TARGET_COMPANY_COUNT * 2, Math.max(12, request.resultLimit * 2)),
-  );
-  const officialLookupQueries = buildOfficialLookupQueries(seedNames).slice(
-    0,
-    officialLookupQueryLimit(request.resultLimit),
-  );
-  const lookupSettled = await searchQueriesInBatches(
-    officialLookupQueries,
-    STRICT_LOOKUP_BATCH_SIZE,
-  );
-  const lookupResults = lookupSettled.flatMap((result) =>
-    result.status === "fulfilled" ? result.value : [],
-  );
-  const rawResults = [...firstPassResults, ...lookupResults];
+  const searchQueries = buildHybridSearchQueries(request, queryStrategy.searchQueries);
+  const resultByUrl = new Map<string, OpportunityResult>();
+  let rawResultsTotal = 0;
+  let officialCandidatesTotal = 0;
+  let crawlAttemptedTotal = 0;
+  let crawledPagesTotal = 0;
+  let crawlFailedTotal = 0;
+  const crawlFilteredTotal = 0;
+  let passedEvidenceTotal = 0;
+  let removedByEvidenceTotal = 0;
+  let sawSearchFailure = false;
 
-  if (rawResults.length === 0 && failed.length === settled.length) {
+  for (let attempt = 1; attempt <= STRICT_SEARCH_ATTEMPTS; attempt += 1) {
+    if (resultByUrl.size >= request.resultLimit) {
+      break;
+    }
+
+    const attemptQueries = selectAttemptQueries(
+      searchQueries,
+      attempt,
+      STRICT_SEARCH_ATTEMPTS,
+    );
+    const settled = await searchQueriesInBatches(attemptQueries, STRICT_SEARCH_BATCH_SIZE);
+    const failed = settled.filter((result) => result.status === "rejected");
+    const attemptResults = settled.flatMap((result) =>
+      result.status === "fulfilled" ? result.value : [],
+    );
+
+    rawResultsTotal += attemptResults.length;
+    sawSearchFailure =
+      sawSearchFailure || (attemptResults.length === 0 && failed.length === settled.length);
+
+    const verified = verifyHomepageCandidates(attemptResults, request).slice(
+      0,
+      request.resultLimit,
+    );
+    officialCandidatesTotal += verified.length;
+    const enrichment = await enrichHomepageCandidates(verified, request);
+    crawlAttemptedTotal += verified.length;
+    crawledPagesTotal += enrichment.verifiedCount;
+    crawlFailedTotal += enrichment.failedCount;
+    passedEvidenceTotal += enrichment.candidates.length;
+    removedByEvidenceTotal += Math.max(0, verified.length - enrichment.candidates.length);
+
+    const enriched = enrichment.candidates;
+    for (const candidate of enriched) {
+      const result = toOpportunityResult(candidate, request, resultByUrl.size);
+      if (!result.websiteUrl || resultByUrl.has(result.websiteUrl)) {
+        continue;
+      }
+      resultByUrl.set(result.websiteUrl, result);
+    }
+  }
+
+  if (resultByUrl.size === 0 && sawSearchFailure) {
     throw new Error(
       "Public web search is unavailable. Start SearXNG on 127.0.0.1:8080 and try again.",
     );
   }
-  const verified = verifyHomepageCandidates(rawResults, request).slice(
-    0,
-    request.resultLimit,
-  );
-  const enrichment = await enrichHomepageCandidates(verified, request);
-  const enriched = enrichment.candidates;
+
   const results = await applyDatabaseStatuses(
-    enriched.map((candidate, index) => toOpportunityResult(candidate, request, index)),
+    prioritizeStrictResults(Array.from(resultByUrl.values())).slice(
+      0,
+      request.resultLimit,
+    ),
   );
 
   return {
     strategy: {
-      objective: `Find real company homepages for ${request.referenceKeyword}.`,
-      signals: [
-        "Official company homepage",
-        "Company/about wording",
-        "Non-directory public web result",
+      objective: searchPlan.intentSummary,
+      signals: uniqueStrings([
+        ...searchPlan.signals,
+        ...searchPlan.searchTerms,
+      ]).slice(0, 8),
+      sources: [
+        "Ollama query expansion",
+        "SearXNG public web search",
+        "Strict homepage verification",
       ],
-      sources: ["SearXNG public web search"],
       confidence: results.length > 0 ? "Medium" : "Low",
     },
     results,
@@ -163,25 +199,106 @@ export async function runStrictPublicCompanySearch(
       durationMs: Date.now() - startedAt,
       diagnostics: {
         requested: request.resultLimit,
-        rawResults: rawResults.length,
-        officialCandidates: verified.length,
-        crawlAttempted: verified.length,
-        crawledPages: enrichment.verifiedCount,
-        crawlFailed: enrichment.failedCount,
-        crawlFiltered: 0,
-        passedEvidence: enriched.length,
-        removedByEvidence: Math.max(0, rawResults.length - enriched.length),
+        rawResults: rawResultsTotal,
+        officialCandidates: officialCandidatesTotal,
+        crawlAttempted: crawlAttemptedTotal,
+        crawledPages: crawledPagesTotal,
+        crawlFailed: crawlFailedTotal,
+        crawlFiltered: crawlFilteredTotal,
+        passedEvidence: passedEvidenceTotal,
+        removedByEvidence: removedByEvidenceTotal,
         finalShown: results.length,
       },
       searchQueries,
       searchPlan,
-      candidateNames: enriched.map((candidate) => candidate.companyName),
-      officialLookupQueries,
-      crawledPages: enrichment.verifiedCount,
+      candidateNames: results.map((candidate) => candidate.companyName),
+      officialLookupQueries: searchQueries,
+      crawledPages: crawledPagesTotal,
       resultLimit: request.resultLimit,
       usedFallbackAnalysis: false,
     },
   };
+}
+
+function buildHybridSearchQueries(
+  request: SearchAnalyzeRequest,
+  ollamaQueries: string[],
+) {
+  return uniqueStrings([
+    ...ollamaQueries,
+    ...buildStrictSearchQueries(request),
+  ]).slice(0, Math.max(request.resultLimit * 2, 24));
+}
+
+function mergeSearchPlans(
+  primary: OpportunitySearchPlan,
+  fallback: OpportunitySearchPlan,
+): OpportunitySearchPlan {
+  return {
+    intentSummary: primary.intentSummary || fallback.intentSummary,
+    targetCompanyProfile: primary.targetCompanyProfile || fallback.targetCompanyProfile,
+    searchIntent: {
+      companyIdentity: uniqueStrings([
+        ...fallback.searchIntent.companyIdentity,
+        ...primary.searchIntent.companyIdentity,
+      ]).slice(0, 8),
+      operatingLocation: uniqueStrings([
+        ...fallback.searchIntent.operatingLocation,
+        ...primary.searchIntent.operatingLocation,
+      ]).slice(0, 8),
+      industry: uniqueStrings([
+        ...fallback.searchIntent.industry,
+        ...primary.searchIntent.industry,
+      ]).slice(0, 8),
+      requiredEvidence: uniqueStrings([
+        ...fallback.searchIntent.requiredEvidence,
+        ...primary.searchIntent.requiredEvidence,
+      ]).slice(0, 8),
+      exclude: uniqueStrings([
+        ...fallback.searchIntent.exclude,
+        ...primary.searchIntent.exclude,
+      ]).slice(0, 8),
+    },
+    searchTerms: uniqueStrings([
+      ...fallback.searchTerms,
+      ...primary.searchTerms,
+    ]).slice(0, 12),
+    excludeTerms: uniqueStrings([
+      ...fallback.excludeTerms,
+      ...primary.excludeTerms,
+    ]).slice(0, 12),
+    signals: uniqueStrings([...fallback.signals, ...primary.signals]).slice(0, 8),
+  };
+}
+
+function selectAttemptQueries(
+  queries: string[],
+  attempt: number,
+  maxAttempts: number,
+) {
+  const groupSize = Math.max(4, Math.ceil(queries.length / maxAttempts));
+  const start = (attempt - 1) * groupSize;
+  const selected = queries.slice(start, start + groupSize);
+
+  return selected.length > 0 ? selected : queries.slice(0, groupSize);
+}
+
+function prioritizeStrictResults(results: OpportunityResult[]) {
+  const order = {
+    saved: 0,
+    seen: 1,
+    new: 2,
+  } as const;
+
+  return [...results].sort(
+    (left, right) =>
+      order[left.databaseStatus?.state ?? "new"] -
+      order[right.databaseStatus?.state ?? "new"],
+  );
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
 async function enrichHomepageCandidates(
@@ -559,20 +676,6 @@ function buildDeterministicExpansionQueries(
   ].map((query) => query.replace(/\s+/g, " ").trim());
 }
 
-function buildOfficialLookupQueries(candidateNames: string[]) {
-  return candidateNames.flatMap((name) => [
-    `"${name}" official website`,
-    `"${name}" company profile`,
-    `"${name}" about us`,
-    `"${name}" 公式サイト`,
-    `"${name}" 会社概要`,
-  ]);
-}
-
-function officialLookupQueryLimit(resultLimit: number) {
-  return Math.min(MAX_TARGET_COMPANY_COUNT * 3, Math.max(30, resultLimit * 3));
-}
-
 async function mapWithConcurrency<Input, Output>(
   values: Input[],
   concurrency: number,
@@ -595,43 +698,6 @@ async function mapWithConcurrency<Input, Output>(
   }
 
   return results.filter((value): value is Output => value !== undefined);
-}
-
-function extractCompanySeedNames(results: SearxngResult[]) {
-  const seen = new Set<string>();
-  const names: string[] = [];
-
-  for (const result of results) {
-    const text = `${result.title ?? ""}. ${result.content ?? ""}`;
-    const matches = [
-      ...text.matchAll(
-        /\b([A-Z][A-Za-z0-9&.'() -]{2,70}(?:Co\.?\s*,?\s*Ltd\.?|Company Limited|Corporation|Corp\.?|JSC|Joint Stock Company|Ltd\.?|Inc\.?))\b/g,
-      ),
-      ...text.matchAll(
-        /\b([A-Z][A-Za-z0-9&.'() -]{2,60})\s*,\s*(?:a|an)\s+(?:small|midsize|mid-sized|large)?\s*(?:software|it|web|mobile|digital|consulting|development|outsourcing)/gi,
-      ),
-    ];
-
-    for (const match of matches) {
-      const name = cleanupSeedName(match[1] ?? "");
-      const key = name.toLowerCase();
-
-      if (name && !seen.has(key) && !isGenericName(name)) {
-        seen.add(key);
-        names.push(name);
-      }
-    }
-  }
-
-  return names;
-}
-
-function cleanupSeedName(value: string) {
-  return value
-    .replace(/^[^A-Za-z0-9]+/, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/[.,;:]+$/, "");
 }
 
 function toOpportunityResult(
@@ -1069,7 +1135,7 @@ function extractCompanyNameFromContent(content: string) {
 
   for (const pattern of patterns) {
     const match = content.match(pattern);
-    const name = cleanupSeedName(match?.[1] ?? "");
+    const name = cleanupCompanyName(match?.[1] ?? "");
 
     if (name) {
       return name;

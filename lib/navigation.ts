@@ -5,21 +5,6 @@ export const workflowSteps = [
     description: "Find candidate companies from public sources.",
   },
   {
-    label: "Search Goals",
-    href: "/search-goals",
-    description: "Review campaign goals, attempts, saved leads, and rejected candidates.",
-  },
-  {
-    label: "AI Queue",
-    href: "/companies",
-    description: "Review company readiness, outreach state, and next actions.",
-  },
-  {
-    label: "Company Research",
-    href: "/company-research",
-    description: "Collect sales context from company websites.",
-  },
-  {
     label: "Lead CRM",
     href: "/leads",
     description: "Manage lead status, priority, notes, and tags.",
@@ -42,11 +27,6 @@ export const workflowSteps = [
   {
     label: "Settings",
     href: "/settings",
-    description: "Configure Gmail, AI, search, and local services.",
-  },
-  {
-    label: "Database",
-    href: "/database",
-    description: "Preview real PostgreSQL rows through Prisma.",
+    description: "Connect the mailbox used for outbound outreach.",
   },
 ];

@@ -141,6 +141,20 @@ model Company {
   @@map("companies")
 }
 
+model CompanyBlocklist {
+  id               String   @id @default(uuid())
+  normalizedDomain String?  @unique @map("normalized_domain")
+  websiteUrl       String?  @map("website_url")
+  companyName      String   @map("company_name")
+  reason           String   @default("not_a_fit")
+  source           String   @default("manual")
+  notes            String?
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([companyName])
+  @@map("company_blocklist")
+}
+
 model CompanyResearch {
   id                 String   @id @default(uuid())
   companyId          String   @map("company_id")

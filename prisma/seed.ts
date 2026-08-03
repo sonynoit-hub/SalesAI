@@ -23,7 +23,7 @@ async function main() {
     where: { websiteUrl: "https://example-it-customer.com" },
     update: {
       name: "Example IT Customer",
-      industry: "Manufacturing",
+      industry: "製造業",
       location: "Tokyo",
       description: "Sample company used for local SalesAI development.",
       source: CompanySource.MANUAL,
@@ -31,7 +31,7 @@ async function main() {
     create: {
       name: "Example IT Customer",
       websiteUrl: "https://example-it-customer.com",
-      industry: "Manufacturing",
+      industry: "製造業",
       location: "Tokyo",
       description: "Sample company used for local SalesAI development.",
       source: CompanySource.MANUAL,
