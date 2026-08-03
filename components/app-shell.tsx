@@ -85,13 +85,13 @@ export function AppShell({
             {collapsed ? (
               <Link
                 className="flex h-8 w-8 items-center justify-center rounded-md text-xs font-bold text-emerald-700 hover:bg-slate-100"
-                href="/"
+                href="/leads"
                 title="SalesAI"
               >
                 SA
               </Link>
             ) : (
-              <Link href="/" className="block min-w-0">
+              <Link href="/leads" className="block min-w-0">
                 <p className="text-sm font-semibold uppercase tracking-wide text-emerald-700">
                   SalesAI
                 </p>

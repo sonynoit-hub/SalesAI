@@ -416,7 +416,7 @@ export function LeadsManager({ rows }: { rows: LeadManageRow[] }) {
 
   return (
     <div className="space-y-2">
-      <section className="rounded-md border border-slate-200 bg-white px-4 py-3 shadow-sm">
+      <section className="hidden rounded-md border border-slate-200 bg-white px-4 py-3 shadow-sm md:block">
         <button
           className="flex w-full items-center justify-between gap-3 text-left"
           onClick={() => setIsCreateOpen((open) => !open)}

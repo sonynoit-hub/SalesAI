@@ -83,7 +83,9 @@ export default async function LeadsPage() {
       description="作成・編集・削除・インポートと連絡先の一括取得。"
     >
       <div className="space-y-2">
-        <LeadsExcelImport />
+        <div className="hidden md:block">
+          <LeadsExcelImport />
+        </div>
         <LeadsManager rows={rows} />
       </div>
     </AppShell>
