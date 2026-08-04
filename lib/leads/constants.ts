@@ -8,6 +8,7 @@ export const LEAD_STATUS_OPTIONS = [
   "MEETING",
   "WON",
   "LOST",
+  "ARCHIVED",
 ] as const;
 
 export const LEAD_PRIORITY_OPTIONS = ["LOW", "MEDIUM", "HIGH"] as const;

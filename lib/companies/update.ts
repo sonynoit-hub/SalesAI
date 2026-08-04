@@ -8,7 +8,7 @@ import { formatIndustryJa } from "@/lib/industries";
 import { normalizeLocationLabel } from "@/lib/leads/constants";
 
 export const companyProfileSchema = z.object({
-  name: z.string().trim().min(1).max(200),
+  name: z.string().trim().max(200).optional().default(""),
   websiteUrl: z.string().trim().max(500).optional().default(""),
   industry: z.string().trim().max(120).optional().default(""),
   location: z.string().trim().max(120).optional().default(""),

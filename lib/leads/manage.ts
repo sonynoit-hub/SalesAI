@@ -13,8 +13,8 @@ import {
 } from "@/lib/leads/constants";
 import {
   CompanySource,
+  LeadStatus,
   type LeadPriority,
-  type LeadStatus,
 } from "@/lib/generated/prisma/client";
 
 export { LEAD_PRIORITY_OPTIONS, LEAD_STATUS_OPTIONS } from "@/lib/leads/constants";
@@ -223,15 +223,11 @@ export async function deleteManagedLead(leadId: string) {
     select: {
       id: true,
       companyId: true,
+      notes: true,
       company: {
         select: {
           id: true,
           name: true,
-          _count: {
-            select: {
-              leads: true,
-            },
-          },
         },
       },
     },
@@ -241,20 +237,12 @@ export async function deleteManagedLead(leadId: string) {
     throw new Error("Lead was not found.");
   }
 
-  // Lead CRM rows are company-centric: removing the only lead removes the company.
-  if (lead.company._count.leads <= 1) {
-    await prisma.company.delete({
-      where: { id: lead.companyId },
-    });
-    return {
-      deletedLeadId: lead.id,
-      deletedCompanyId: lead.companyId,
-      companyName: lead.company.name,
-    };
-  }
-
-  await prisma.lead.delete({
-    where: { id: lead.id },
+  await prisma.lead.update({
+    where: { id: leadId },
+    data: {
+      status: LeadStatus.ARCHIVED,
+      notes: appendArchivedNote(lead.notes),
+    },
   });
 
   return {
@@ -262,6 +250,12 @@ export async function deleteManagedLead(leadId: string) {
     deletedCompanyId: null,
     companyName: lead.company.name,
   };
+}
+
+function appendArchivedNote(notes: string | null) {
+  const archivedAt = new Date().toISOString();
+  const archivedNote = `Archived from Lead CRM at ${archivedAt}.`;
+  return notes ? `${notes}\n\n${archivedNote}` : archivedNote;
 }
 
 async function upsertContact(

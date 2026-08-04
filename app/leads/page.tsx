@@ -1,41 +1,68 @@
 import { AppShell } from "@/components/app-shell";
 import { DatabaseUnavailable } from "@/components/database-unavailable";
-import { LeadsExcelImport } from "@/components/leads-excel-import";
 import {
   LeadsManager,
   type LeadManageRow,
 } from "@/components/leads-manager";
 import {
   formatDateTime,
-  safeGetCompanyQueueRows,
+  safeGetLeadCrmPageRows,
 } from "@/lib/db/sales-workflow";
 import { deriveLeadContactActivity } from "@/lib/leads/contact-activity";
 import { getLatestContactEventsByLeadIds } from "@/lib/leads/contact-events";
 import {
+  type LeadStatusFilterGroup,
   latestLeadProgressAt,
   leadProgressEventLabel,
+  type QualifyFilterGroup,
   resolveLeadProgressStatus,
 } from "@/lib/leads/status";
 
 export const dynamic = "force-dynamic";
 
-export default async function LeadsPage() {
-  const loaded = await safeGetCompanyQueueRows();
+type LeadsPageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+};
+
+const QUALIFY_FILTERS = new Set(["all", "unconfirmed", "qualified", "passed"]);
+const PROGRESS_FILTERS = new Set([
+  "all",
+  "not_yet",
+  "contacted",
+  "replied",
+  "closed",
+]);
+
+export default async function LeadsPage({ searchParams }: LeadsPageProps) {
+  const params = (await searchParams) ?? {};
+  const filters = {
+    location: getStringParam(params.location) || "all",
+    qualify: getEnumParam(params.qualify, QUALIFY_FILTERS, "all") as QualifyFilterGroup,
+    progress: getEnumParam(
+      params.progress,
+      PROGRESS_FILTERS,
+      "all",
+    ) as LeadStatusFilterGroup,
+  };
+  const page = parsePositiveInteger(getStringParam(params.page), 1);
+
+  const loaded = await safeGetLeadCrmPageRows({
+    filters,
+    page,
+  });
   if (!loaded.ok) {
     return <DatabaseUnavailable eyebrow="パイプライン" message={loaded.message} />;
   }
 
-  const leadIds = loaded.rows
-    .map((row) => row.primaryLead?.id)
-    .filter((id): id is string => Boolean(id));
+  const { rows: leadRows, locationOptions, pagination } = loaded.data;
+  const leadIds = leadRows.map((row) => row.id);
   const contactEventsByLeadId = await getLatestContactEventsByLeadIds(leadIds);
 
-  const rows: LeadManageRow[] = loaded.rows
-    .filter((row) => row.primaryLead)
+  const rows: LeadManageRow[] = leadRows
     .map((row) => {
-      const lead = row.primaryLead!;
+      const lead = row;
       const email =
-        row.primaryContact?.email ?? row.outreachEmail ?? row.company.primaryEmail ?? "";
+        row.contact?.email ?? row.company.primaryEmail ?? "";
       const contactFormUrl = row.company.contactFormUrl ?? "";
       const contactActivity = deriveLeadContactActivity({
         tags: lead.tags,
@@ -56,10 +83,10 @@ export default async function LeadsPage() {
         industry: row.company.industry ?? "",
         location: row.company.location ?? "",
         address: row.company.address ?? "",
-        contactName: row.primaryContact?.name ?? "",
-        contactTitle: row.primaryContact?.title ?? "",
+        contactName: row.contact?.name ?? "",
+        contactTitle: row.contact?.title ?? "",
         email,
-        phone: row.primaryContact?.phone ?? "",
+        phone: row.contact?.phone ?? "",
         contactFormUrl,
         hasOutreachChannel: Boolean(email || contactFormUrl),
         status: lead.status,
@@ -76,18 +103,36 @@ export default async function LeadsPage() {
     });
 
   return (
-    <AppShell
-      dense
-      eyebrow="パイプライン"
-      title="リード管理"
-      description="作成・編集・削除・インポートと連絡先の一括取得。"
-    >
+    <AppShell dense>
       <div className="space-y-2">
-        <div className="hidden md:block">
-          <LeadsExcelImport />
-        </div>
-        <LeadsManager rows={rows} />
+        <LeadsManager
+          filters={filters}
+          locationOptions={locationOptions}
+          pagination={pagination}
+          rows={rows}
+        />
       </div>
     </AppShell>
   );
+}
+
+function getStringParam(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function getEnumParam(
+  value: string | string[] | undefined,
+  allowed: Set<string>,
+  fallback: string,
+) {
+  const current = getStringParam(value);
+  return current && allowed.has(current) ? current : fallback;
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    return fallback;
+  }
+  return parsed;
 }

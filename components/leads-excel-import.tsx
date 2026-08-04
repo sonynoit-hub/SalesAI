@@ -20,10 +20,10 @@ type ImportResponse = {
   };
 };
 
-export function LeadsExcelImport() {
+export function LeadsExcelImport({ embedded = false }: { embedded?: boolean }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(embedded);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -93,6 +93,74 @@ export function LeadsExcelImport() {
     void uploadFile(file);
   }
 
+  const content = (
+    <div className={embedded ? "" : "mt-3 border-t border-slate-100 pt-3"}>
+      <p className="text-xs text-slate-600">
+        対応ヘッダー例：{" "}
+        <span className="font-mono text-[11px] text-slate-700">
+          公司名称 / 会社名, 官网 / URL, 都道府县 / 所在地, 地址 / 住所
+        </span>
+      </p>
+
+      <div
+        className={`mt-2 flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-3 py-3 text-center transition ${
+          isDragging
+            ? "border-emerald-500 bg-emerald-50"
+            : "border-slate-300 bg-slate-50 hover:border-slate-400"
+        } ${isUploading ? "pointer-events-none opacity-70" : ""}`}
+        onClick={() => inputRef.current?.click()}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          setIsDragging(true);
+        }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setIsDragging(true);
+        }}
+        onDragLeave={(event) => {
+          event.preventDefault();
+          setIsDragging(false);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setIsDragging(false);
+          handleFiles(event.dataTransfer.files);
+        }}
+      >
+        <p className="text-xs font-medium text-slate-900">
+          {isUploading
+            ? "インポート中…"
+            : "ファイルをドロップ、またはクリックして選択"}
+        </p>
+        <input
+          ref={inputRef}
+          accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+          className="hidden"
+          type="file"
+          onChange={(event) => handleFiles(event.target.files)}
+        />
+      </div>
+
+      {successMessage ? (
+        <p className="mt-2 text-xs text-emerald-700">{successMessage}</p>
+      ) : null}
+      {errorMessage ? (
+        <p className="mt-2 text-xs text-rose-700">{errorMessage}</p>
+      ) : null}
+      {failurePreview.length > 0 ? (
+        <ul className="mt-2 space-y-1 text-[11px] text-amber-800">
+          {failurePreview.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+
+  if (embedded) {
+    return content;
+  }
+
   return (
     <section className="rounded-md border border-slate-200 bg-white px-4 py-3 shadow-sm">
       <button
@@ -111,69 +179,7 @@ export function LeadsExcelImport() {
         </span>
       </button>
 
-      {isOpen ? (
-        <div className="mt-3 border-t border-slate-100 pt-3">
-          <p className="text-xs text-slate-600">
-            対応ヘッダー例：{" "}
-            <span className="font-mono text-[11px] text-slate-700">
-              公司名称 / 会社名, 官网 / URL, 都道府县 / 所在地, 地址 / 住所
-            </span>
-          </p>
-
-          <div
-            className={`mt-2 flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-3 py-3 text-center transition ${
-              isDragging
-                ? "border-emerald-500 bg-emerald-50"
-                : "border-slate-300 bg-slate-50 hover:border-slate-400"
-            } ${isUploading ? "pointer-events-none opacity-70" : ""}`}
-            onClick={() => inputRef.current?.click()}
-            onDragEnter={(event) => {
-              event.preventDefault();
-              setIsDragging(true);
-            }}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setIsDragging(true);
-            }}
-            onDragLeave={(event) => {
-              event.preventDefault();
-              setIsDragging(false);
-            }}
-            onDrop={(event) => {
-              event.preventDefault();
-              setIsDragging(false);
-              handleFiles(event.dataTransfer.files);
-            }}
-          >
-            <p className="text-xs font-medium text-slate-900">
-              {isUploading
-                ? "インポート中…"
-                : "ファイルをドロップ、またはクリックして選択"}
-            </p>
-            <input
-              ref={inputRef}
-              accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
-              className="hidden"
-              type="file"
-              onChange={(event) => handleFiles(event.target.files)}
-            />
-          </div>
-
-          {successMessage ? (
-            <p className="mt-2 text-xs text-emerald-700">{successMessage}</p>
-          ) : null}
-          {errorMessage ? (
-            <p className="mt-2 text-xs text-rose-700">{errorMessage}</p>
-          ) : null}
-          {failurePreview.length > 0 ? (
-            <ul className="mt-2 space-y-1 text-[11px] text-amber-800">
-              {failurePreview.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-      ) : null}
+      {isOpen ? content : null}
 
       {!isOpen && (successMessage || errorMessage) ? (
         <div className="mt-2 text-xs">

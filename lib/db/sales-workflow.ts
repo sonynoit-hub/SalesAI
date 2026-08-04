@@ -1,11 +1,50 @@
 import { prisma } from "@/lib/db/prisma";
+import {
+  LEAD_TAG_EMAIL_CONTACTED,
+  LEAD_TAG_EMAIL_REPLIED,
+  LEAD_TAG_PHONE_CONTACTED,
+  normalizeLocationLabel,
+} from "@/lib/leads/constants";
+import type {
+  LeadStatusFilterGroup,
+  QualifyFilterGroup,
+} from "@/lib/leads/status";
 import type {
   Contact,
   EmailDraft,
   FollowUpTask,
   Lead,
+  Prisma,
   SentEmail,
 } from "@/lib/generated/prisma/client";
+
+const ACTIVE_LEAD_STATUSES = [
+  "NEW",
+  "RESEARCHED",
+  "QUALIFIED",
+  "CONTACTED",
+  "REPLIED",
+  "FOLLOW_UP",
+  "MEETING",
+  "WON",
+  "LOST",
+] as const;
+
+const DEFAULT_LEAD_CRM_PAGE_SIZE = 50;
+const MAX_LEAD_CRM_PAGE_SIZE = 100;
+
+export type LeadCrmFilters = {
+  location: string;
+  qualify: QualifyFilterGroup;
+  progress: LeadStatusFilterGroup;
+};
+
+export type LeadCrmPagination = {
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+};
 
 export function getDatabaseErrorMessage(error: unknown) {
   const codes = collectErrorCodes(error);
@@ -60,6 +99,228 @@ export async function safeGetCompanyQueueRow(companyId: string): Promise<
   };
 }
 
+export type LeadCrmPageRow = Awaited<
+  ReturnType<typeof getLeadCrmPageRows>
+>["rows"][number];
+
+export async function safeGetLeadCrmPageRows(input: {
+  filters: LeadCrmFilters;
+  page: number;
+  pageSize?: number;
+}): Promise<
+  | { ok: true; data: Awaited<ReturnType<typeof getLeadCrmPageRows>> }
+  | { ok: false; message: string }
+> {
+  try {
+    return { ok: true, data: await getLeadCrmPageRows(input) };
+  } catch (error) {
+    const message = getDatabaseErrorMessage(error);
+    if (!message) {
+      throw error;
+    }
+    return { ok: false, message };
+  }
+}
+
+export async function getLeadCrmPageRows({
+  filters,
+  page,
+  pageSize = DEFAULT_LEAD_CRM_PAGE_SIZE,
+}: {
+  filters: LeadCrmFilters;
+  page: number;
+  pageSize?: number;
+}) {
+  const normalizedPageSize = Math.min(
+    Math.max(1, pageSize),
+    MAX_LEAD_CRM_PAGE_SIZE,
+  );
+  const where = buildLeadCrmWhere(filters);
+  const totalCount = await prisma.lead.count({ where });
+  const totalPages = Math.max(1, Math.ceil(totalCount / normalizedPageSize));
+  const normalizedPage = Math.min(Math.max(1, page), totalPages);
+
+  const [rows, locationOptions] = await Promise.all([
+    prisma.lead.findMany({
+      where,
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+      skip: (normalizedPage - 1) * normalizedPageSize,
+      take: normalizedPageSize,
+      include: {
+        company: true,
+        contact: true,
+      },
+    }),
+    getLeadCrmLocationOptions(),
+  ]);
+
+  return {
+    rows,
+    locationOptions,
+    pagination: {
+      page: normalizedPage,
+      pageSize: normalizedPageSize,
+      totalCount,
+      totalPages,
+    },
+  };
+}
+
+async function getLeadCrmLocationOptions() {
+  const companies = await prisma.company.findMany({
+    where: {
+      leads: {
+        some: {
+          status: {
+            in: [...ACTIVE_LEAD_STATUSES],
+          },
+        },
+      },
+    },
+    select: {
+      location: true,
+    },
+  });
+
+  return Array.from(
+    new Set(
+      companies
+        .map((company) => normalizeLocationLabel(company.location ?? ""))
+        .filter((location) => Boolean(location) && !/^[a-z]/i.test(location)),
+    ),
+  ).sort((a, b) => a.localeCompare(b, "ja"));
+}
+
+function buildLeadCrmWhere(filters: LeadCrmFilters): Prisma.LeadWhereInput {
+  const and: Prisma.LeadWhereInput[] = [
+    {
+      status: {
+        in: [...ACTIVE_LEAD_STATUSES],
+      },
+    },
+  ];
+
+  if (filters.location !== "all") {
+    const locationAliases = leadLocationAliases(filters.location);
+    and.push({
+      company: {
+        OR: locationAliases.map((location) => ({ location })),
+      },
+    });
+  }
+
+  const qualifyWhere = leadQualifyWhere(filters.qualify);
+  if (qualifyWhere) {
+    and.push(qualifyWhere);
+  }
+
+  const progressWhere = leadProgressWhere(filters.progress);
+  if (progressWhere) {
+    and.push(progressWhere);
+  }
+
+  return { AND: and };
+}
+
+function leadQualifyWhere(
+  qualify: QualifyFilterGroup,
+): Prisma.LeadWhereInput | null {
+  if (qualify === "all") return null;
+  if (qualify === "unconfirmed") {
+    return { status: "NEW" };
+  }
+  if (qualify === "passed") {
+    return { status: { in: ["RESEARCHED", "LOST"] } };
+  }
+  return {
+    status: {
+      in: ["QUALIFIED", "CONTACTED", "REPLIED", "FOLLOW_UP", "MEETING", "WON"],
+    },
+  };
+}
+
+function leadProgressWhere(
+  progress: LeadStatusFilterGroup,
+): Prisma.LeadWhereInput | null {
+  if (progress === "all") return null;
+  if (progress === "closed") {
+    return { status: { in: ["MEETING", "WON", "LOST"] } };
+  }
+  if (progress === "replied") {
+    return {
+      OR: [
+        {
+          contactEvents: {
+            some: {
+              channel: "email",
+              eventType: "replied",
+            },
+          },
+        },
+        { tags: { has: LEAD_TAG_EMAIL_REPLIED } },
+      ],
+    };
+  }
+  if (progress === "contacted") {
+    return {
+      OR: [
+        { status: { in: ["CONTACTED", "FOLLOW_UP"] } },
+        {
+          contactEvents: {
+            some: {
+              eventType: "contacted",
+            },
+          },
+        },
+        { tags: { has: LEAD_TAG_EMAIL_CONTACTED } },
+        { tags: { has: LEAD_TAG_PHONE_CONTACTED } },
+      ],
+    };
+  }
+  return {
+    AND: [
+      { status: { in: ["NEW", "RESEARCHED", "QUALIFIED"] } },
+      {
+        contactEvents: {
+          none: {
+            eventType: {
+              in: ["contacted", "replied"],
+            },
+          },
+        },
+      },
+      { NOT: { tags: { has: LEAD_TAG_EMAIL_CONTACTED } } },
+      { NOT: { tags: { has: LEAD_TAG_PHONE_CONTACTED } } },
+      { NOT: { tags: { has: LEAD_TAG_EMAIL_REPLIED } } },
+    ],
+  };
+}
+
+function leadLocationAliases(location: string) {
+  const aliases = new Set([location]);
+  const englishCandidates = [
+    "tokyo",
+    "tokyo-to",
+    "osaka",
+    "kyoto",
+    "hokkaido",
+    "aichi",
+    "kanagawa",
+    "saitama",
+    "chiba",
+    "hyogo",
+    "fukuoka",
+  ];
+
+  for (const candidate of englishCandidates) {
+    if (normalizeLocationLabel(candidate) === location) {
+      aliases.add(candidate);
+    }
+  }
+
+  return [...aliases];
+}
+
 function collectErrorCodes(error: unknown) {
   const codes = new Set<string>();
   let current: unknown = error;
@@ -112,6 +373,11 @@ export async function getCompanyQueueRows() {
         take: 5,
       },
       leads: {
+        where: {
+          status: {
+            in: [...ACTIVE_LEAD_STATUSES],
+          },
+        },
         orderBy: { updatedAt: "desc" },
         take: 5,
         include: {
@@ -176,7 +442,13 @@ export async function getDashboardData() {
     sentEmailCount,
     openFollowUpCount,
   ] = await Promise.all([
-    prisma.lead.count(),
+    prisma.lead.count({
+      where: {
+        status: {
+          in: [...ACTIVE_LEAD_STATUSES],
+        },
+      },
+    }),
     prisma.emailDraft.count({
       where: {
         status: {

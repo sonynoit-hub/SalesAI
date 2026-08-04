@@ -139,7 +139,6 @@ export function CompanyProfileEditor({
       <Field
         label="会社名"
         onChange={(value) => setForm((current) => ({ ...current, name: value }))}
-        required
         value={form.name}
       />
       <Field

@@ -1,29 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import {
-  LeadTrackingActions,
-  type LeadContactActivitySummary,
-} from "@/components/lead-tracking-actions";
+import { LeadsExcelImport } from "@/components/leads-excel-import";
+import type { LeadContactActivitySummary } from "@/components/lead-tracking-actions";
 import { formatIndustryJa } from "@/lib/industries";
 import {
   LEAD_PRIORITY_OPTIONS,
   LEAD_STATUS_OPTIONS,
-  normalizeLocationLabel,
 } from "@/lib/leads/constants";
 import {
-  leadMatchesProgressFilter,
-  leadMatchesQualifyFilter,
   leadStatusLabelJa,
   nextQualifiedMarkStatus,
   priorityLabelJa,
   qualifyMarkLabel,
   resolveQualifyMark,
-  type LeadStatusFilterGroup,
-  type QualifyFilterGroup,
 } from "@/lib/leads/status";
+import type { LeadCrmFilters, LeadCrmPagination } from "@/lib/db/sales-workflow";
 
 export type LeadManageRow = {
   leadId: string;
@@ -62,9 +56,6 @@ type LeadFormState = {
   notes: string;
 };
 
-type StatusFilter = LeadStatusFilterGroup;
-type QualifyFilter = QualifyFilterGroup;
-
 const emptyForm: LeadFormState = {
   companyName: "",
   websiteUrl: "",
@@ -97,39 +88,37 @@ function rowToForm(row: LeadManageRow): LeadFormState {
   };
 }
 
-export function LeadsManager({ rows }: { rows: LeadManageRow[] }) {
+export function LeadsManager({
+  rows,
+  filters,
+  locationOptions,
+  pagination,
+}: {
+  rows: LeadManageRow[];
+  filters: LeadCrmFilters;
+  locationOptions: string[];
+  pagination: LeadCrmPagination;
+}) {
   const router = useRouter();
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [inputPanel, setInputPanel] = useState<"create" | "import" | null>(null);
   const [createForm, setCreateForm] = useState<LeadFormState>(emptyForm);
-  const [editingLeadId, setEditingLeadId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<LeadFormState>(emptyForm);
   const [isWorking, setIsWorking] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [locationFilter, setLocationFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [qualifyFilter, setQualifyFilter] = useState<QualifyFilter>("all");
   const [localStatusByLeadId, setLocalStatusByLeadId] = useState<
     Record<string, string>
   >({});
-  const [stickyQualifyFilterByLeadId, setStickyQualifyFilterByLeadId] =
-    useState<Record<string, QualifyFilter>>({});
+  const [workingStatusLeadId, setWorkingStatusLeadId] = useState<string | null>(
+    null,
+  );
   const [isEnriching, setIsEnriching] = useState(false);
   const [enrichProgress, setEnrichProgress] = useState<{
     done: number;
     total: number;
     found: number;
   } | null>(null);
-
-  const locationOptions = useMemo(() => {
-    return Array.from(
-      new Set(
-        rows
-          .map((row) => normalizeLocationLabel(row.location))
-          .filter((location) => Boolean(location) && !/^[a-z]/i.test(location)),
-      ),
-    ).sort((a, b) => a.localeCompare(b, "ja"));
-  }, [rows]);
 
   const displayRows = useMemo(() => {
     return rows.map((row) => {
@@ -142,40 +131,44 @@ export function LeadsManager({ rows }: { rows: LeadManageRow[] }) {
     });
   }, [rows, localStatusByLeadId]);
 
-  const filteredRows = useMemo(() => {
-    return displayRows.filter((row) => {
-      if (
-        locationFilter !== "all" &&
-        normalizeLocationLabel(row.location) !== locationFilter
-      ) {
-        return false;
-      }
-      if (
-        statusFilter !== "all" &&
-        !leadMatchesProgressFilter(row.status, row.contactActivity, statusFilter)
-      ) {
-        return false;
-      }
-      if (
-        qualifyFilter !== "all" &&
-        !leadMatchesQualifyFilter(row.status, qualifyFilter) &&
-        stickyQualifyFilterByLeadId[row.leadId] !== qualifyFilter
-      ) {
-        return false;
-      }
-      return true;
-    });
-  }, [
-    displayRows,
-    locationFilter,
-    statusFilter,
-    qualifyFilter,
-    stickyQualifyFilterByLeadId,
-  ]);
-
   const missingContactRows = useMemo(() => {
-    return filteredRows.filter((row) => !row.hasOutreachChannel);
-  }, [filteredRows]);
+    return displayRows.filter((row) => !row.hasOutreachChannel);
+  }, [displayRows]);
+
+  const pageStart =
+    pagination.totalCount === 0
+      ? 0
+      : (pagination.page - 1) * pagination.pageSize + 1;
+  const pageEnd = Math.min(
+    pagination.page * pagination.pageSize,
+    pagination.totalCount,
+  );
+
+  function updateFilter(key: keyof LeadCrmFilters, value: string) {
+    const next = new URLSearchParams(searchParams.toString());
+    if (value === "all") {
+      next.delete(key);
+    } else {
+      next.set(key, value);
+    }
+    next.delete("page");
+    pushSearchParams(next);
+  }
+
+  function goToPage(page: number) {
+    const next = new URLSearchParams(searchParams.toString());
+    if (page <= 1) {
+      next.delete("page");
+    } else {
+      next.set("page", String(page));
+    }
+    pushSearchParams(next);
+  }
+
+  function pushSearchParams(next: URLSearchParams) {
+    const query = next.toString();
+    router.push(query ? `${pathname}?${query}` : pathname);
+  }
 
   async function enrichMissingContacts() {
     if (isWorking || isEnriching) return;
@@ -278,78 +271,12 @@ export function LeadsManager({ rows }: { rows: LeadManageRow[] }) {
       }
 
       setCreateForm(emptyForm);
-      setIsCreateOpen(false);
+      setInputPanel(null);
       setSuccessMessage("リードを作成しました。");
       router.refresh();
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "リードを作成できませんでした。",
-      );
-    } finally {
-      setIsWorking(false);
-    }
-  }
-
-  async function saveEdit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!editingLeadId || isWorking) return;
-
-    setIsWorking(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    try {
-      const response = await fetch(`/api/leads/${editingLeadId}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(editForm),
-      });
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload?.error?.message ?? "リードを更新できませんでした。");
-      }
-
-      setEditingLeadId(null);
-      setSuccessMessage("リードを更新しました。");
-      router.refresh();
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "リードを更新できませんでした。",
-      );
-    } finally {
-      setIsWorking(false);
-    }
-  }
-
-  async function deleteLead(leadId: string, companyName: string) {
-    if (isWorking) return;
-    if (!window.confirm(`${companyName} のリードを削除しますか？この操作は取り消せません。`)) {
-      return;
-    }
-
-    setIsWorking(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-
-    try {
-      const response = await fetch(`/api/leads/${leadId}`, {
-        method: "DELETE",
-      });
-      const payload = await response.json();
-
-      if (!response.ok) {
-        throw new Error(payload?.error?.message ?? "リードを削除できませんでした。");
-      }
-
-      if (editingLeadId === leadId) {
-        setEditingLeadId(null);
-      }
-      setSuccessMessage(`${companyName} を削除しました。`);
-      router.refresh();
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error ? error.message : "リードを削除できませんでした。",
       );
     } finally {
       setIsWorking(false);
@@ -397,12 +324,6 @@ export function LeadsManager({ rows }: { rows: LeadManageRow[] }) {
         ...current,
         [row.leadId]: nextStatus,
       }));
-      if (qualifyFilter !== "all") {
-        setStickyQualifyFilterByLeadId((current) => ({
-          ...current,
-          [row.leadId]: qualifyFilter,
-        }));
-      }
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -414,38 +335,70 @@ export function LeadsManager({ rows }: { rows: LeadManageRow[] }) {
     }
   }
 
+  async function updateContactStatus(
+    row: LeadManageRow,
+    nextStatus: ContactStatusValue,
+  ) {
+    if (isWorking || workingStatusLeadId) return;
+
+    const endpoints = contactStatusEndpoints(row.contactActivity, nextStatus);
+    if (nextStatus !== "not_contacted" && endpoints.length === 0) {
+      return;
+    }
+
+    setWorkingStatusLeadId(row.leadId);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      if (nextStatus === "not_contacted") {
+        const response = await fetch(
+          `/api/leads/${row.leadId}/contact-status`,
+          {
+            method: "DELETE",
+          },
+        );
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            payload?.error?.message ?? "連絡ステータスを未連絡に戻せませんでした。",
+          );
+        }
+
+        setSuccessMessage(`${row.companyName || "リード"} を未連絡に戻しました。`);
+        router.refresh();
+        return;
+      }
+
+      for (const endpoint of endpoints) {
+        const response = await fetch(`/api/leads/${row.leadId}/${endpoint}`, {
+          method: "POST",
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            payload?.error?.message ?? "連絡ステータスを更新できませんでした。",
+          );
+        }
+      }
+
+      setSuccessMessage(`${row.companyName || "リード"} の連絡ステータスを更新しました。`);
+      router.refresh();
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "連絡ステータスを更新できませんでした。",
+      );
+    } finally {
+      setWorkingStatusLeadId(null);
+    }
+  }
+
   return (
     <div className="space-y-2">
-      <section className="hidden rounded-md border border-slate-200 bg-white px-4 py-3 shadow-sm md:block">
-        <button
-          className="flex w-full items-center justify-between gap-3 text-left"
-          onClick={() => setIsCreateOpen((open) => !open)}
-          type="button"
-        >
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-slate-950">リード追加</h3>
-            <p className="mt-0.5 truncate text-xs text-slate-500">
-              会社・担当者・ステータスを直接登録
-            </p>
-          </div>
-          <span className="inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-800 shadow-sm">
-            {isCreateOpen ? "閉じる" : "開く"}
-          </span>
-        </button>
-        {isCreateOpen ? (
-          <form className="mt-3 space-y-3 border-t border-slate-100 pt-3" onSubmit={createLead}>
-            <LeadFormFields form={createForm} onChange={setCreateForm} />
-            <button
-              className="inline-flex h-9 items-center justify-center rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-              disabled={isWorking}
-              type="submit"
-            >
-              {isWorking ? "保存中…" : "リードを作成"}
-            </button>
-          </form>
-        ) : null}
-      </section>
-
       {(errorMessage || successMessage) && (
         <div className="text-sm">
           {errorMessage ? <p className="text-rose-700">{errorMessage}</p> : null}
@@ -455,68 +408,142 @@ export function LeadsManager({ rows }: { rows: LeadManageRow[] }) {
         </div>
       )}
 
-      <section className="rounded-md border border-slate-200 bg-white px-4 py-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-950">リード一覧</h3>
-            <p className="mt-0.5 text-xs text-slate-500">
-              {rows.length}件中 {filteredRows.length}件を表示
-              {missingContactRows.length > 0
-                ? `（連絡先未設定 ${missingContactRows.length}件）`
-                : ""}
-            </p>
-          </div>
-          <div className="flex flex-col gap-2">
-            <div className="grid gap-2 sm:grid-cols-3">
-              <label className="block text-xs">
-                <span className="font-medium text-slate-700">所在地</span>
-                <select
-                  className="mt-1 h-8 w-full min-w-36 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-900"
-                  onChange={(event) => setLocationFilter(event.currentTarget.value)}
-                  value={locationFilter}
-                >
-                  <option value="all">すべての所在地</option>
-                  {locationOptions.map((location) => (
-                    <option key={location} value={location}>
-                      {location}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-xs">
-                <span className="font-medium text-slate-700">見込み</span>
-                <select
-                  className="mt-1 h-8 w-full min-w-36 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-900"
-                  onChange={(event) =>
-                    setQualifyFilter(event.currentTarget.value as QualifyFilter)
-                  }
-                  value={qualifyFilter}
-                >
-                  <option value="all">すべて</option>
-                  <option value="unconfirmed">未確認</option>
-                  <option value="qualified">見込み</option>
-                  <option value="passed">見送り</option>
-                </select>
-              </label>
-              <label className="block text-xs">
-                <span className="font-medium text-slate-700">連絡進捗</span>
-                <select
-                  className="mt-1 h-8 w-full min-w-36 rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-900"
-                  onChange={(event) =>
-                    setStatusFilter(event.currentTarget.value as StatusFilter)
-                  }
-                  value={statusFilter}
-                >
-                  <option value="all">すべて</option>
-                  <option value="not_yet">未連絡</option>
-                  <option value="contacted">連絡済み</option>
-                  <option value="replied">返信あり</option>
-                  <option value="closed">完了</option>
-                </select>
-              </label>
+      <section className="rounded-md border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div className="shrink-0">
+              <h3 className="text-sm font-semibold text-slate-950">リード一覧</h3>
+              <p className="mt-0.5 text-xs text-slate-500">
+                {pagination.totalCount === 0
+                  ? "0件を表示"
+                  : `${pagination.totalCount}件中 ${pageStart}-${pageEnd}件を表示`}
+                {missingContactRows.length > 0
+                  ? `（連絡先未設定 ${missingContactRows.length}件）`
+                  : ""}
+              </p>
             </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className={`inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-semibold ${
+                  inputPanel === "create"
+                    ? "border border-emerald-700 bg-emerald-700 text-white shadow-sm"
+                    : "border border-emerald-200 bg-white text-emerald-800 shadow-sm hover:bg-emerald-50"
+                }`}
+                onClick={() =>
+                  setInputPanel((current) =>
+                    current === "create" ? null : "create",
+                  )
+                }
+                type="button"
+              >
+                + Add Lead
+              </button>
+              <button
+                className={`inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-semibold ${
+                  inputPanel === "import"
+                    ? "border border-slate-800 bg-slate-800 text-white shadow-sm"
+                    : "border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50"
+                }`}
+                onClick={() =>
+                  setInputPanel((current) =>
+                    current === "import" ? null : "import",
+                  )
+                }
+                type="button"
+              >
+                Import Excel
+              </button>
+            </div>
+          </div>
+
+          {inputPanel ? (
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h4 className="text-xs font-semibold text-slate-800">
+                  {inputPanel === "create" ? "リード追加" : "Excelインポート"}
+                </h4>
+                <button
+                  className="inline-flex h-7 items-center justify-center rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                  onClick={() => setInputPanel(null)}
+                  type="button"
+                >
+                  閉じる
+                </button>
+              </div>
+              {inputPanel === "create" ? (
+                <form className="space-y-3" onSubmit={createLead}>
+                  <LeadFormFields form={createForm} onChange={setCreateForm} />
+                  <button
+                    className="inline-flex h-9 items-center justify-center rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    disabled={isWorking}
+                    type="submit"
+                  >
+                    {isWorking ? "保存中…" : "リードを作成"}
+                  </button>
+                </form>
+              ) : (
+                <LeadsExcelImport embedded />
+              )}
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+            <label className="flex h-8 w-full items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs sm:w-auto">
+              <span className="shrink-0 font-medium text-slate-600">
+                所在地
+              </span>
+              <select
+                className="h-6 min-w-36 flex-1 border-0 bg-transparent px-0 text-xs text-slate-900 outline-none"
+                onChange={(event) =>
+                  updateFilter("location", event.currentTarget.value)
+                }
+                value={filters.location}
+              >
+                <option value="all">すべて</option>
+                {locationOptions.map((location) => (
+                  <option key={location} value={location}>
+                    {location}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex h-8 w-full items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs sm:w-auto">
+              <span className="shrink-0 font-medium text-slate-600">
+                見込み
+              </span>
+              <select
+                className="h-6 min-w-24 flex-1 border-0 bg-transparent px-0 text-xs text-slate-900 outline-none"
+                onChange={(event) =>
+                  updateFilter("qualify", event.currentTarget.value)
+                }
+                value={filters.qualify}
+              >
+                <option value="all">すべて</option>
+                <option value="unconfirmed">未確認</option>
+                <option value="qualified">見込み</option>
+                <option value="passed">見送り</option>
+              </select>
+            </label>
+            <label className="flex h-8 w-full items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs sm:w-auto">
+              <span className="shrink-0 font-medium text-slate-600">
+                連絡進捗
+              </span>
+              <select
+                className="h-6 min-w-24 flex-1 border-0 bg-transparent px-0 text-xs text-slate-900 outline-none"
+                onChange={(event) =>
+                  updateFilter("progress", event.currentTarget.value)
+                }
+                value={filters.progress}
+              >
+                <option value="all">すべて</option>
+                <option value="not_yet">未連絡</option>
+                <option value="contacted">連絡済み</option>
+                <option value="replied">返信あり</option>
+                <option value="closed">完了</option>
+              </select>
+            </label>
             <button
-              className="inline-flex h-8 items-center justify-center rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-emerald-300"
+              className="inline-flex h-8 w-full items-center justify-center rounded-md border border-emerald-700 bg-emerald-700 px-3 text-xs font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-emerald-300 disabled:bg-emerald-300 sm:w-auto sm:min-w-56"
               disabled={isWorking || isEnriching || missingContactRows.length === 0}
               onClick={() => void enrichMissingContacts()}
               type="button"
@@ -525,201 +552,282 @@ export function LeadsManager({ rows }: { rows: LeadManageRow[] }) {
                 ? `連絡先検索中… ${enrichProgress?.done ?? 0}/${enrichProgress?.total ?? 0}`
                 : `連絡先を一括検索（未設定 ${missingContactRows.length}社）`}
             </button>
-            {enrichProgress ? (
-              <p className="text-xs text-slate-500">
-                進捗 {enrichProgress.done}/{enrichProgress.total} ・ 取得成功{" "}
-                {enrichProgress.found}社
-              </p>
-            ) : null}
           </div>
         </div>
+        {enrichProgress ? (
+          <p className="mt-2 text-right text-xs text-slate-500">
+            進捗 {enrichProgress.done}/{enrichProgress.total} ・ 取得成功{" "}
+            {enrichProgress.found}社
+          </p>
+        ) : null}
 
-        <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-slate-100/50 p-1.5">
-          <div className="min-w-[720px] space-y-1">
-            {filteredRows.length === 0 ? (
-              <p className="rounded-md border border-dashed border-slate-300 bg-white px-4 py-6 text-center text-sm text-slate-500">
-                {rows.length === 0
-                  ? "リードがありません。上のフォームかExcelから追加してください。"
-                  : "選択した条件に一致するリードがありません。"}
-              </p>
-            ) : null}
-            {filteredRows.map((row, rowIndex) => {
-              const isEditing = editingLeadId === row.leadId;
-              const isEvenRow = rowIndex % 2 === 0;
-
-              return (
-                <article
-                  className={`rounded border px-2 py-1 ${
-                    isEvenRow
-                      ? "border-slate-200 bg-white"
-                      : "border-sky-200/80 bg-sky-50/70"
+        <div className="mt-4 overflow-x-auto rounded-md border border-slate-200">
+          <table className="w-full min-w-[1040px] border-collapse bg-white text-left text-xs">
+            <thead className="sticky top-0 z-10 bg-slate-100 text-[11px] font-semibold uppercase tracking-normal text-slate-600">
+              <tr className="border-b border-slate-200">
+                <th className="w-[22%] px-3 py-2">Company</th>
+                <th className="w-[13%] px-3 py-2">URL</th>
+                <th className="w-[9%] px-3 py-2">Confirm</th>
+                <th className="w-[12%] px-3 py-2">Status</th>
+                <th className="w-[18%] px-3 py-2">Email</th>
+                <th className="w-[11%] px-3 py-2">Phone</th>
+                <th className="w-[8%] px-3 py-2">Location</th>
+                <th className="w-[7%] px-3 py-2">Last Activity</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {displayRows.length === 0 ? (
+                <tr>
+                  <td
+                    className="px-3 py-8 text-center text-sm text-slate-500"
+                    colSpan={8}
+                  >
+                    {pagination.totalCount === 0
+                      ? "リードがありません。上のフォームかExcelから追加してください。"
+                      : "選択した条件に一致するリードがありません。"}
+                  </td>
+                </tr>
+              ) : null}
+              {displayRows.map((row, index) => (
+                <tr
+                  className={`align-middle transition-colors hover:bg-blue-50/60 ${
+                    index % 2 === 0 ? "bg-white" : "bg-slate-50"
                   }`}
                   key={row.leadId}
                 >
-                  {isEditing ? (
-                    <form className="space-y-3 py-1" onSubmit={saveEdit}>
-                      <LeadFormFields form={editForm} onChange={setEditForm} />
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          className="inline-flex h-9 items-center justify-center rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-                          disabled={isWorking}
-                          type="submit"
-                        >
-                          {isWorking ? "保存中…" : "変更を保存"}
-                        </button>
-                        <button
-                          className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 shadow-sm hover:bg-white"
-                          disabled={isWorking}
-                          onClick={() => setEditingLeadId(null)}
-                          type="button"
-                        >
-                          キャンセル
-                        </button>
-                      </div>
-                    </form>
-                  ) : (
-                    <div className="grid grid-cols-[minmax(0,1.5fr)_auto_minmax(11rem,1fr)] items-center gap-x-2 text-[10px] leading-4">
-                      {/* Col 1: company — 2 lines */}
-                      <div className="min-w-0">
-                        <Link
-                          className="block truncate text-[11px] font-semibold text-slate-950 hover:text-blue-600"
-                          href={`/companies/${row.companyId}`}
-                          title={row.companyName || "未命名の会社"}
-                        >
-                          {row.companyName || "未命名の会社"}
-                        </Link>
-                        <p className="mt-0.5 truncate text-slate-600">
-                          <CompanyMetaLine row={row} />
-                        </p>
-                      </div>
-
-                      {/* Col 2: mark */}
-                      <div className="flex justify-center self-center">
-                        <QualifyMarkButton
-                          disabled={isWorking}
-                          onToggle={() => void toggleQualifyMark(row)}
-                          status={row.status}
-                        />
-                      </div>
-
-                      {/* Col 3: outreach — 2 lines */}
-                      <div className="min-w-0">
-                        <div className="flex flex-nowrap items-center justify-end gap-0.5">
-                          <span
-                            className={`inline-flex h-5 items-center whitespace-nowrap rounded border px-1.5 text-[10px] font-medium ${leadListStatusToneClass(
-                              row.progressStatus,
-                            )}`}
-                          >
-                            {leadStatusLabelJa(row.progressStatus)}
-                          </span>
-                          <LeadTrackingActions
-                            contactActivity={row.contactActivity}
-                            disabled={isWorking}
-                            leadId={row.leadId}
-                            onError={setErrorMessage}
-                            onSuccess={setSuccessMessage}
-                            size="compact"
-                          />
-                        </div>
-                        <div className="mt-0.5 flex flex-nowrap items-center justify-end gap-0.5">
-                          <span className="truncate text-[9px] text-slate-500">
-                            {row.progressAtLabel}
-                          </span>
-                          <button
-                            className="inline-flex h-5 items-center justify-center rounded border border-slate-200 bg-white px-1.5 text-[10px] font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:bg-slate-100"
-                            disabled={isWorking}
-                            onClick={() => {
-                              setEditingLeadId(row.leadId);
-                              setEditForm(rowToForm(row));
-                              setErrorMessage(null);
-                              setSuccessMessage(null);
-                            }}
-                            type="button"
-                          >
-                            編集
-                          </button>
-                          <button
-                            className="inline-flex h-5 items-center justify-center rounded border border-rose-200 bg-rose-50 px-1.5 text-[10px] font-medium text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:bg-rose-50"
-                            disabled={isWorking}
-                            onClick={() =>
-                              deleteLead(
-                                row.leadId,
-                                row.companyName || "この会社",
-                              )
-                            }
-                            type="button"
-                          >
-                            削除
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
+                  <td className="px-3 py-2">
+                    <Link
+                      className="block max-w-[18rem] truncate font-medium text-slate-950 hover:text-blue-700 hover:underline"
+                      href={`/companies/${row.companyId}`}
+                      title={row.companyName || "未命名の会社"}
+                    >
+                      {row.companyName || "未命名の会社"}
+                    </Link>
+                  </td>
+                  <td className="px-3 py-2">
+                    <WebsiteLink url={row.websiteUrl} />
+                  </td>
+                  <td className="px-3 py-2">
+                    <QualifyMarkButton
+                      disabled={isWorking}
+                      onToggle={() => void toggleQualifyMark(row)}
+                      status={row.status}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <ContactStatusSelect
+                      activity={row.contactActivity}
+                      disabled={isWorking || workingStatusLeadId !== null}
+                      isWorking={workingStatusLeadId === row.leadId}
+                      onChange={(nextStatus) =>
+                        void updateContactStatus(row, nextStatus)
+                      }
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <ContactEmail email={row.email} />
+                  </td>
+                  <td className="px-3 py-2 text-slate-700">
+                    {row.phone || <EmptyValue />}
+                  </td>
+                  <td className="px-3 py-2">
+                    <LocationText row={row} />
+                  </td>
+                  <td className="px-3 py-2 text-[11px] text-slate-500">
+                    <span
+                      className="block max-w-[9rem] truncate"
+                      title={row.progressAtLabel}
+                    >
+                      {row.progressAtLabel}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
+        {pagination.totalPages > 1 ? (
+          <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs text-slate-500">
+            <span>
+              {pagination.page} / {pagination.totalPages} ページ
+            </span>
+            <div className="flex gap-2">
+              <button
+                className="inline-flex h-8 items-center justify-center rounded-md border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
+                disabled={pagination.page <= 1}
+                onClick={() => goToPage(pagination.page - 1)}
+                type="button"
+              >
+                前へ
+              </button>
+              <button
+                className="inline-flex h-8 items-center justify-center rounded-md border border-slate-200 bg-white px-3 font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
+                disabled={pagination.page >= pagination.totalPages}
+                onClick={() => goToPage(pagination.page + 1)}
+                type="button"
+              >
+                次へ
+              </button>
+            </div>
+          </div>
+        ) : null}
       </section>
     </div>
   );
 }
 
-function CompanyMetaLine({ row }: { row: LeadManageRow }) {
-  const person = [row.contactName, row.contactTitle].filter(Boolean).join(" · ");
-  const parts: React.ReactNode[] = [];
+function WebsiteLink({ url }: { url: string }) {
+  if (!url) {
+    return <EmptyValue />;
+  }
 
-  if (row.address) {
-    parts.push(
-      <span className="text-slate-500" key="address">
-        {row.address}
-      </span>,
-    );
-  }
-  if (row.websiteUrl) {
-    parts.push(
-      <a
-        className="text-blue-600 hover:text-blue-800"
-        href={row.websiteUrl}
-        key="website"
-        rel="noreferrer"
-        target="_blank"
-      >
-        サイト
-      </a>,
-    );
-  }
-  if (row.contactFormUrl) {
-    parts.push(
-      <a
-        className="text-blue-600 hover:text-blue-800"
-        href={row.contactFormUrl}
-        key="form"
-        rel="noreferrer"
-        target="_blank"
-      >
-        フォーム
-      </a>,
-    );
-  }
-  if (person) parts.push(<span key="person">{person}</span>);
-  if (row.email) parts.push(<span key="email">{row.email}</span>);
-  if (row.phone) parts.push(<span key="phone">{row.phone}</span>);
+  const label = getWebsiteLabel(url);
 
-  if (parts.length === 0) {
-    return <span className="text-slate-400">連絡先なし</span>;
+  return (
+    <a
+      className="block max-w-[11rem] truncate text-[11px] font-medium text-blue-600 hover:text-blue-800 hover:underline"
+      href={url}
+      rel="noreferrer"
+      target="_blank"
+      title={url}
+    >
+      {label}
+    </a>
+  );
+}
+
+function ContactEmail({ email }: { email: string }) {
+  if (!email) {
+    return <EmptyValue />;
   }
 
   return (
-    <>
-      {parts.map((part, index) => (
-        <span key={index}>
-          {index > 0 ? <span className="text-slate-300"> · </span> : null}
-          {part}
-        </span>
-      ))}
-    </>
+    <a
+      className="block max-w-[15rem] truncate text-slate-700 hover:text-blue-700 hover:underline"
+      href={`mailto:${email}`}
+      title={email}
+    >
+      {email}
+    </a>
   );
+}
+
+function LocationText({ row }: { row: LeadManageRow }) {
+  const label = row.location || row.address;
+  const title = [row.location, row.address].filter(Boolean).join(" / ");
+
+  if (!label) {
+    return <EmptyValue />;
+  }
+
+  return (
+    <span className="block max-w-[10rem] truncate text-slate-700" title={title}>
+      {label}
+    </span>
+  );
+}
+
+function getWebsiteLabel(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url.replace(/^https?:\/\//, "").replace(/^www\./, "");
+  }
+}
+
+function EmptyValue() {
+  return <span className="text-slate-300">—</span>;
+}
+
+type ContactStatusValue =
+  | "not_contacted"
+  | "email"
+  | "phone"
+  | "email_phone"
+  | "reply";
+
+const CONTACT_STATUS_OPTIONS: Array<{
+  value: ContactStatusValue;
+  label: string;
+}> = [
+  { value: "not_contacted", label: "未連絡" },
+  { value: "email", label: "メール済み" },
+  { value: "phone", label: "電話済み" },
+  { value: "email_phone", label: "メール・電話済み" },
+  { value: "reply", label: "返信あり" },
+];
+
+function ContactStatusSelect({
+  activity,
+  disabled,
+  isWorking,
+  onChange,
+}: {
+  activity: LeadContactActivitySummary;
+  disabled?: boolean;
+  isWorking?: boolean;
+  onChange: (nextStatus: ContactStatusValue) => void;
+}) {
+  const value = resolveContactStatusValue(activity);
+
+  return (
+    <select
+      aria-label="連絡ステータス"
+      className={`h-6 w-32 cursor-pointer rounded-full border px-2 text-[11px] font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60 ${contactStatusToneClass(
+        value,
+      )}`}
+      disabled={disabled}
+      onChange={(event) =>
+        onChange(event.currentTarget.value as ContactStatusValue)
+      }
+      title="連絡ステータスを記録"
+      value={value}
+    >
+      {CONTACT_STATUS_OPTIONS.map((option) => (
+        <option key={option.value} value={option.value}>
+          {isWorking && option.value === value ? "更新中…" : option.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function resolveContactStatusValue(
+  activity: LeadContactActivitySummary,
+): ContactStatusValue {
+  if (activity.hasEmailReply) return "reply";
+  if (activity.hasEmailContact && activity.hasPhoneContact) return "email_phone";
+  if (activity.hasEmailContact) return "email";
+  if (activity.hasPhoneContact) return "phone";
+  return "not_contacted";
+}
+
+function contactStatusEndpoints(
+  activity: LeadContactActivitySummary,
+  nextStatus: ContactStatusValue,
+) {
+  if (nextStatus === "not_contacted") return [];
+  if (nextStatus === "email") {
+    return activity.hasEmailContact ? [] : ["email"];
+  }
+  if (nextStatus === "phone") {
+    return activity.hasPhoneContact ? [] : ["call"];
+  }
+  if (nextStatus === "email_phone") {
+    return [
+      ...(activity.hasEmailContact ? [] : ["email"]),
+      ...(activity.hasPhoneContact ? [] : ["call"]),
+    ];
+  }
+  return activity.hasEmailReply ? [] : ["reply"];
+}
+
+function contactStatusToneClass(status: ContactStatusValue) {
+  if (status === "reply") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (status === "email_phone") return "border-violet-200 bg-violet-50 text-violet-800";
+  if (status === "email") return "border-sky-200 bg-sky-50 text-sky-800";
+  if (status === "phone") return "border-indigo-200 bg-indigo-50 text-indigo-800";
+  return "border-amber-200 bg-amber-50 text-amber-800";
 }
 
 function QualifyMarkButton({
@@ -739,8 +847,8 @@ function QualifyMarkButton({
     kind === "qualified"
       ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
       : kind === "passed"
-        ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
-        : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50";
+        ? "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
+        : "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100";
 
   if (!canToggle) {
     return (
@@ -749,8 +857,8 @@ function QualifyMarkButton({
           kind === "qualified"
             ? "border-emerald-200 bg-emerald-50 text-emerald-800"
             : kind === "passed"
-              ? "border-amber-200 bg-amber-50 text-amber-800"
-              : "border-slate-300 bg-white text-slate-600"
+              ? "border-rose-200 bg-rose-50 text-rose-700"
+              : "border-amber-200 bg-amber-50 text-amber-800"
         }`}
       >
         {label}
@@ -769,30 +877,6 @@ function QualifyMarkButton({
       {label}
     </button>
   );
-}
-
-function leadListStatusToneClass(status: string) {
-  const normalized = status.toUpperCase();
-  if (normalized === "LOST") return "border-rose-200 bg-rose-50 text-rose-700";
-  if (
-    normalized === "WON" ||
-    normalized === "REPLIED" ||
-    normalized === "CONTACTED"
-  ) {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  }
-  if (
-    normalized === "FOLLOW_UP" ||
-    normalized === "MEETING" ||
-    normalized === "QUALIFIED" ||
-    normalized === "RESEARCHED"
-  ) {
-    return "border-sky-200 bg-sky-50 text-sky-700";
-  }
-  if (normalized === "NEW" || normalized === "NOT_CONTACTED") {
-    return "border-amber-200 bg-amber-50 text-amber-800";
-  }
-  return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
 function LeadFormFields({

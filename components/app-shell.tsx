@@ -44,8 +44,8 @@ function setCollapsedPreference(next: boolean) {
 
 type AppShellProps = {
   eyebrow?: string;
-  title: string;
-  description: string;
+  title?: string;
+  description?: string;
   dense?: boolean;
   action?: {
     label: string;
@@ -55,7 +55,7 @@ type AppShellProps = {
 };
 
 export function AppShell({
-  eyebrow = "SalesAI",
+  eyebrow,
   title,
   description,
   dense = false,
@@ -68,6 +68,7 @@ export function AppShell({
     getCollapsedSnapshot,
     getServerCollapsedSnapshot,
   );
+  const showHeader = Boolean(title || description || action);
 
   return (
     <main className="min-h-screen bg-white">
@@ -184,41 +185,47 @@ export function AppShell({
             </details>
           </div>
 
-          <div
-            className={`flex flex-col gap-3 border-b border-slate-200 sm:flex-row sm:items-end sm:justify-between ${
-              dense ? "mb-3 pb-3" : "mb-6 gap-4 pb-5"
-            }`}
-          >
-            <div>
-              <p className="text-sm font-medium text-emerald-700">{eyebrow}</p>
-              <h2
-                className={`mt-1 font-semibold text-slate-950 ${
-                  dense ? "text-xl" : "text-2xl"
-                }`}
-              >
-                {title}
-              </h2>
-              {description ? (
-                <p
-                  className={`max-w-3xl text-sm text-slate-600 ${
-                    dense ? "mt-1 leading-5" : "mt-2 leading-6"
+          {showHeader ? (
+            <div
+              className={`flex flex-col gap-3 border-b border-slate-200 sm:flex-row sm:items-end sm:justify-between ${
+                dense ? "mb-3 pb-3" : "mb-6 gap-4 pb-5"
+              }`}
+            >
+              <div>
+                {eyebrow ? (
+                  <p className="text-sm font-medium text-emerald-700">{eyebrow}</p>
+                ) : null}
+                {title ? (
+                  <h2
+                    className={`font-semibold text-slate-950 ${
+                      dense ? "text-xl" : "text-2xl"
+                    } ${eyebrow ? "mt-1" : ""}`}
+                  >
+                    {title}
+                  </h2>
+                ) : null}
+                {description ? (
+                  <p
+                    className={`max-w-3xl text-sm text-slate-600 ${
+                      dense ? "mt-1 leading-5" : "mt-2 leading-6"
+                    }`}
+                  >
+                    {description}
+                  </p>
+                ) : null}
+              </div>
+              {action ? (
+                <Link
+                  className={`inline-flex items-center justify-center rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 ${
+                    dense ? "h-9" : "h-10"
                   }`}
+                  href={action.href}
                 >
-                  {description}
-                </p>
+                  {action.label}
+                </Link>
               ) : null}
             </div>
-            {action ? (
-              <Link
-                className={`inline-flex items-center justify-center rounded-md bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800 ${
-                  dense ? "h-9" : "h-10"
-                }`}
-                href={action.href}
-              >
-                {action.label}
-              </Link>
-            ) : null}
-          </div>
+          ) : null}
           {children}
         </section>
       </div>

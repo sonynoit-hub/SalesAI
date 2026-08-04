@@ -34,6 +34,7 @@ enum LeadStatus {
   MEETING    @map("meeting")
   WON        @map("won")
   LOST       @map("lost")
+  ARCHIVED   @map("archived")
 
   @@map("lead_status")
 }

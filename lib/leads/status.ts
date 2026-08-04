@@ -4,6 +4,7 @@ const STATUSES_AFTER_CONTACTED = new Set([
   "MEETING",
   "WON",
   "LOST",
+  "ARCHIVED",
 ]);
 
 const ADVANCED_PIPELINE_STATUSES = new Set([
@@ -11,6 +12,7 @@ const ADVANCED_PIPELINE_STATUSES = new Set([
   "MEETING",
   "WON",
   "LOST",
+  "ARCHIVED",
 ]);
 
 export type LeadContactFlags = {
@@ -63,7 +65,13 @@ export function resolveLeadProgressStatus(
 export function resolveQualifyMark(status: string): QualifyMarkKind {
   const normalized = status.toUpperCase();
   if (normalized === "NEW") return "unconfirmed";
-  if (normalized === "RESEARCHED" || normalized === "LOST") return "passed";
+  if (
+    normalized === "RESEARCHED" ||
+    normalized === "LOST" ||
+    normalized === "ARCHIVED"
+  ) {
+    return "passed";
+  }
   return "qualified";
 }
 
@@ -143,6 +151,7 @@ const LEAD_STATUS_LABELS_JA: Record<string, string> = {
   MEETING: "商談中",
   WON: "受注",
   LOST: "失注",
+  ARCHIVED: "削除済み",
   NOT_CONTACTED: "未連絡",
 };
 
@@ -173,7 +182,7 @@ const FILTER_GROUP_STATUSES: Record<
   not_yet: ["NOT_CONTACTED", "NEW", "RESEARCHED", "QUALIFIED"],
   contacted: ["CONTACTED", "FOLLOW_UP"],
   replied: ["REPLIED"],
-  closed: ["MEETING", "WON", "LOST"],
+  closed: ["MEETING", "WON", "LOST", "ARCHIVED"],
 };
 
 export function leadMatchesStatusFilter(
