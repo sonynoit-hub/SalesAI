@@ -453,6 +453,16 @@ export function LeadsManager({
               >
                 Import Excel
               </button>
+              <button
+                className="inline-flex h-8 items-center justify-center rounded-md border border-emerald-700 bg-emerald-700 px-3 text-xs font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-emerald-300 disabled:bg-emerald-300"
+                disabled={isWorking || isEnriching || missingContactRows.length === 0}
+                onClick={() => void enrichMissingContacts()}
+                type="button"
+              >
+                {isEnriching
+                  ? `連絡先検索中… ${enrichProgress?.done ?? 0}/${enrichProgress?.total ?? 0}`
+                  : `連絡先を一括検索（未設定 ${missingContactRows.length}社）`}
+              </button>
             </div>
           </div>
 
@@ -542,16 +552,6 @@ export function LeadsManager({
                 <option value="closed">完了</option>
               </select>
             </label>
-            <button
-              className="inline-flex h-8 w-full items-center justify-center rounded-md border border-emerald-700 bg-emerald-700 px-3 text-xs font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-emerald-300 disabled:bg-emerald-300 sm:w-auto sm:min-w-56"
-              disabled={isWorking || isEnriching || missingContactRows.length === 0}
-              onClick={() => void enrichMissingContacts()}
-              type="button"
-            >
-              {isEnriching
-                ? `連絡先検索中… ${enrichProgress?.done ?? 0}/${enrichProgress?.total ?? 0}`
-                : `連絡先を一括検索（未設定 ${missingContactRows.length}社）`}
-            </button>
           </div>
         </div>
         {enrichProgress ? (
@@ -563,16 +563,16 @@ export function LeadsManager({
 
         <div className="mt-4 overflow-x-auto rounded-md border border-slate-200">
           <table className="w-full min-w-[1040px] border-collapse bg-white text-left text-xs">
-            <thead className="sticky top-0 z-10 bg-slate-100 text-[11px] font-semibold uppercase tracking-normal text-slate-600">
-              <tr className="border-b border-slate-200">
+            <thead className="sticky top-0 z-10 bg-emerald-800 text-[11px] font-semibold uppercase tracking-normal text-white">
+              <tr className="border-b border-emerald-900">
                 <th className="w-[22%] px-3 py-2">Company</th>
                 <th className="w-[13%] px-3 py-2">URL</th>
                 <th className="w-[9%] px-3 py-2">Confirm</th>
-                <th className="w-[12%] px-3 py-2">Status</th>
-                <th className="w-[18%] px-3 py-2">Email</th>
-                <th className="w-[11%] px-3 py-2">Phone</th>
-                <th className="w-[8%] px-3 py-2">Location</th>
-                <th className="w-[7%] px-3 py-2">Last Activity</th>
+                <th className="w-px whitespace-nowrap px-2 py-2">Status</th>
+                <th className="w-[20%] px-3 py-2">Email</th>
+                <th className="w-[12%] px-3 py-2">Phone</th>
+                <th className="w-[9%] px-3 py-2">Location</th>
+                <th className="w-[8%] px-3 py-2">Last Activity</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -614,7 +614,7 @@ export function LeadsManager({
                       status={row.status}
                     />
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="whitespace-nowrap px-2 py-2">
                     <ContactStatusSelect
                       activity={row.contactActivity}
                       disabled={isWorking || workingStatusLeadId !== null}
@@ -743,7 +743,6 @@ type ContactStatusValue =
   | "not_contacted"
   | "email"
   | "phone"
-  | "email_phone"
   | "reply";
 
 const CONTACT_STATUS_OPTIONS: Array<{
@@ -753,7 +752,6 @@ const CONTACT_STATUS_OPTIONS: Array<{
   { value: "not_contacted", label: "未連絡" },
   { value: "email", label: "メール済み" },
   { value: "phone", label: "電話済み" },
-  { value: "email_phone", label: "メール・電話済み" },
   { value: "reply", label: "返信あり" },
 ];
 
@@ -773,7 +771,7 @@ function ContactStatusSelect({
   return (
     <select
       aria-label="連絡ステータス"
-      className={`h-6 w-32 cursor-pointer rounded-full border px-2 text-[11px] font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60 ${contactStatusToneClass(
+      className={`h-6 w-[5.75rem] cursor-pointer rounded-full border px-1.5 text-[11px] font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60 ${contactStatusToneClass(
         value,
       )}`}
       disabled={disabled}
@@ -796,7 +794,6 @@ function resolveContactStatusValue(
   activity: LeadContactActivitySummary,
 ): ContactStatusValue {
   if (activity.hasEmailReply) return "reply";
-  if (activity.hasEmailContact && activity.hasPhoneContact) return "email_phone";
   if (activity.hasEmailContact) return "email";
   if (activity.hasPhoneContact) return "phone";
   return "not_contacted";
@@ -813,18 +810,11 @@ function contactStatusEndpoints(
   if (nextStatus === "phone") {
     return activity.hasPhoneContact ? [] : ["call"];
   }
-  if (nextStatus === "email_phone") {
-    return [
-      ...(activity.hasEmailContact ? [] : ["email"]),
-      ...(activity.hasPhoneContact ? [] : ["call"]),
-    ];
-  }
   return activity.hasEmailReply ? [] : ["reply"];
 }
 
 function contactStatusToneClass(status: ContactStatusValue) {
   if (status === "reply") return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  if (status === "email_phone") return "border-violet-200 bg-violet-50 text-violet-800";
   if (status === "email") return "border-sky-200 bg-sky-50 text-sky-800";
   if (status === "phone") return "border-indigo-200 bg-indigo-50 text-indigo-800";
   return "border-amber-200 bg-amber-50 text-amber-800";
