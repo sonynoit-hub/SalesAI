@@ -37,7 +37,7 @@ export default async function LeadsPage({ searchParams }: LeadsPageProps) {
   const params = (await searchParams) ?? {};
   const filters = {
     location: getStringParam(params.location) || "all",
-    qualify: getEnumParam(params.qualify, QUALIFY_FILTERS, "all") as QualifyFilterGroup,
+    qualify: getEnumParam(params.qualify, QUALIFY_FILTERS, "qualified") as QualifyFilterGroup,
     progress: getEnumParam(
       params.progress,
       PROGRESS_FILTERS,
