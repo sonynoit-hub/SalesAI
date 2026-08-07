@@ -23,9 +23,19 @@ export type LeadContactFlags = {
 
 export type QualifyMarkKind = "unconfirmed" | "qualified" | "passed";
 
+const QUALIFY_PIPELINE_STATUSES = new Set([
+  "NEW",
+  "QUALIFIED",
+  "RESEARCHED",
+]);
+
 export function resolveLeadStatusAfterContact(current: string): string {
   const normalized = current.toUpperCase();
   if (STATUSES_AFTER_CONTACTED.has(normalized)) {
+    return normalized;
+  }
+  // Keep Confirm-column marks intact; outreach progress comes from contact events.
+  if (QUALIFY_PIPELINE_STATUSES.has(normalized)) {
     return normalized;
   }
   return "CONTACTED";
@@ -81,15 +91,14 @@ export function qualifyMarkLabel(kind: QualifyMarkKind): string {
   return "未確認";
 }
 
-/** Next status when cycling the mark, or null when locked (outreach already started). */
+/** Next status when cycling Confirm: 未確認 → 見込み → 見送り → 未確認. */
 export function nextQualifiedMarkStatus(
   status: string,
-): "NEW" | "QUALIFIED" | "RESEARCHED" | null {
-  const normalized = status.toUpperCase();
-  if (normalized === "NEW") return "QUALIFIED";
-  if (normalized === "QUALIFIED") return "RESEARCHED";
-  if (normalized === "RESEARCHED") return "NEW";
-  return null;
+): "NEW" | "QUALIFIED" | "RESEARCHED" {
+  const kind = resolveQualifyMark(status);
+  if (kind === "unconfirmed") return "QUALIFIED";
+  if (kind === "qualified") return "RESEARCHED";
+  return "NEW";
 }
 
 export type QualifyFilterGroup =

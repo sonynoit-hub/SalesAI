@@ -24,15 +24,20 @@ describe("lead status helpers", () => {
     assert.equal(leadStatusLabelJa("RESEARCHED"), "見送り");
   });
 
-  it("advances pre-contact statuses to contacted", () => {
-    assert.equal(
-      resolveLeadStatusAfterContact(LeadStatus.NEW),
-      LeadStatus.CONTACTED,
-    );
+  it("keeps Confirm marks when logging outreach contact", () => {
+    assert.equal(resolveLeadStatusAfterContact(LeadStatus.NEW), LeadStatus.NEW);
     assert.equal(
       resolveLeadStatusAfterContact(LeadStatus.QUALIFIED),
-      LeadStatus.CONTACTED,
+      LeadStatus.QUALIFIED,
     );
+    assert.equal(
+      resolveLeadStatusAfterContact(LeadStatus.RESEARCHED),
+      LeadStatus.RESEARCHED,
+    );
+  });
+
+  it("still maps unknown pre-pipeline statuses to contacted", () => {
+    assert.equal(resolveLeadStatusAfterContact("SOURCED"), "CONTACTED");
   });
 
   it("does not downgrade replied or later statuses", () => {
@@ -142,7 +147,8 @@ describe("qualify mark helpers", () => {
     assert.equal(nextQualifiedMarkStatus("NEW"), "QUALIFIED");
     assert.equal(nextQualifiedMarkStatus("QUALIFIED"), "RESEARCHED");
     assert.equal(nextQualifiedMarkStatus("RESEARCHED"), "NEW");
-    assert.equal(nextQualifiedMarkStatus("CONTACTED"), null);
+    assert.equal(nextQualifiedMarkStatus("CONTACTED"), "RESEARCHED");
+    assert.equal(nextQualifiedMarkStatus("LOST"), "NEW");
   });
 
   it("filters by qualify mark including 見送り", () => {

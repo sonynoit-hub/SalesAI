@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { LeadsExcelImport } from "@/components/leads-excel-import";
 import type { LeadContactActivitySummary } from "@/components/lead-tracking-actions";
 import { formatIndustryJa } from "@/lib/industries";
@@ -119,6 +119,16 @@ export function LeadsManager({
     total: number;
     found: number;
   } | null>(null);
+
+  // Keep Confirm edits visible in the current list; clear when filters/page change.
+  useEffect(() => {
+    setLocalStatusByLeadId({});
+  }, [
+    filters.qualify,
+    filters.progress,
+    filters.location,
+    pagination.page,
+  ]);
 
   const displayRows = useMemo(() => {
     return rows.map((row) => {
@@ -287,12 +297,6 @@ export function LeadsManager({
     if (isWorking) return;
 
     const nextStatus = nextQualifiedMarkStatus(row.status);
-    if (!nextStatus) {
-      setErrorMessage(
-        "連絡開始後のリードは「編集」からステータスを変更してください。",
-      );
-      return;
-    }
 
     setIsWorking(true);
     setErrorMessage(null);
@@ -324,6 +328,8 @@ export function LeadsManager({
         ...current,
         [row.leadId]: nextStatus,
       }));
+      // Do not refresh: keep the row in the current filter view so Confirm
+      // changes (見込み → 見送り / 未確認) stay visible until the filter changes.
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -831,7 +837,6 @@ function QualifyMarkButton({
 }) {
   const kind = resolveQualifyMark(status);
   const label = qualifyMarkLabel(kind);
-  const canToggle = nextQualifiedMarkStatus(status) !== null;
 
   const toneClass =
     kind === "qualified"
@@ -839,22 +844,6 @@ function QualifyMarkButton({
       : kind === "passed"
         ? "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
         : "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100";
-
-  if (!canToggle) {
-    return (
-      <span
-        className={`inline-flex h-5 shrink-0 items-center rounded border px-1.5 text-[10px] font-semibold ${
-          kind === "qualified"
-            ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-            : kind === "passed"
-              ? "border-rose-200 bg-rose-50 text-rose-700"
-              : "border-amber-200 bg-amber-50 text-amber-800"
-        }`}
-      >
-        {label}
-      </span>
-    );
-  }
 
   return (
     <button
