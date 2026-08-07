@@ -21,7 +21,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "smoke:production": "tsx scripts/smoke-production-leads.ts"
+    "smoke:production": "tsx scripts/smoke-production-leads.ts",
+    "sync:prod-status": "tsx scripts/sync-local-status-to-prod.ts"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
