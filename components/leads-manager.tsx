@@ -110,6 +110,9 @@ export function LeadsManager({
   const [localStatusByLeadId, setLocalStatusByLeadId] = useState<
     Record<string, string>
   >({});
+  const [localContactByLeadId, setLocalContactByLeadId] = useState<
+    Record<string, LeadContactActivitySummary>
+  >({});
   const [workingStatusLeadId, setWorkingStatusLeadId] = useState<string | null>(
     null,
   );
@@ -120,9 +123,10 @@ export function LeadsManager({
     found: number;
   } | null>(null);
 
-  // Keep Confirm edits visible in the current list; clear when filters/page change.
+  // Keep Confirm/連絡 edits visible in the current list; clear when filters/page change.
   useEffect(() => {
     setLocalStatusByLeadId({});
+    setLocalContactByLeadId({});
   }, [
     filters.qualify,
     filters.progress,
@@ -133,13 +137,20 @@ export function LeadsManager({
   const displayRows = useMemo(() => {
     return rows.map((row) => {
       const localStatus = localStatusByLeadId[row.leadId];
-      if (!localStatus) return row;
+      const localContact = localContactByLeadId[row.leadId];
+      if (!localStatus && !localContact) return row;
       return {
         ...row,
-        status: localStatus,
+        status: localStatus ?? row.status,
+        contactActivity: localContact ?? row.contactActivity,
+        progressAtLabel: localContact
+          ? progressLabelForContactStatus(
+              resolveContactStatusValue(localContact),
+            )
+          : row.progressAtLabel,
       };
     });
-  }, [rows, localStatusByLeadId]);
+  }, [rows, localStatusByLeadId, localContactByLeadId]);
 
   const missingContactRows = useMemo(() => {
     return displayRows.filter((row) => !row.hasOutreachChannel);
@@ -347,37 +358,41 @@ export function LeadsManager({
   ) {
     if (isWorking || workingStatusLeadId) return;
 
-    const endpoints = contactStatusEndpoints(row.contactActivity, nextStatus);
-    if (nextStatus !== "not_contacted" && endpoints.length === 0) {
-      return;
-    }
+    const currentStatus = resolveContactStatusValue(row.contactActivity);
+    if (currentStatus === nextStatus) return;
 
     setWorkingStatusLeadId(row.leadId);
     setErrorMessage(null);
     setSuccessMessage(null);
 
     try {
-      if (nextStatus === "not_contacted") {
-        const response = await fetch(
+      // Reset first when switching between contact states so the select value sticks.
+      if (currentStatus !== "not_contacted") {
+        const resetResponse = await fetch(
           `/api/leads/${row.leadId}/contact-status`,
-          {
-            method: "DELETE",
-          },
+          { method: "DELETE" },
         );
-        const payload = await response.json();
-
-        if (!response.ok) {
+        const resetPayload = await resetResponse.json();
+        if (!resetResponse.ok) {
           throw new Error(
-            payload?.error?.message ?? "連絡ステータスを未連絡に戻せませんでした。",
+            resetPayload?.error?.message ??
+              "連絡ステータスを更新できませんでした。",
           );
         }
+      }
 
-        setSuccessMessage(`${row.companyName || "リード"} を未連絡に戻しました。`);
-        router.refresh();
+      if (nextStatus === "not_contacted") {
+        setLocalContactByLeadId((current) => ({
+          ...current,
+          [row.leadId]: activityForContactStatus("not_contacted"),
+        }));
+        setSuccessMessage(
+          `${row.companyName || "リード"} を未連絡に戻しました。`,
+        );
         return;
       }
 
-      for (const endpoint of endpoints) {
+      for (const endpoint of contactStatusSetEndpoints(nextStatus)) {
         const response = await fetch(`/api/leads/${row.leadId}/${endpoint}`, {
           method: "POST",
         });
@@ -390,8 +405,13 @@ export function LeadsManager({
         }
       }
 
-      setSuccessMessage(`${row.companyName || "リード"} の連絡ステータスを更新しました。`);
-      router.refresh();
+      setLocalContactByLeadId((current) => ({
+        ...current,
+        [row.leadId]: activityForContactStatus(nextStatus),
+      }));
+      setSuccessMessage(
+        `${row.companyName || "リード"} の連絡ステータスを更新しました。`,
+      );
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -574,7 +594,7 @@ export function LeadsManager({
                 <th className="w-[22%] px-3 py-2">Company</th>
                 <th className="w-[13%] px-3 py-2">URL</th>
                 <th className="w-[9%] px-3 py-2">Confirm</th>
-                <th className="w-px whitespace-nowrap px-2 py-2">Status</th>
+                <th className="w-px whitespace-nowrap px-2 py-2">連絡</th>
                 <th className="w-[20%] px-3 py-2">Email</th>
                 <th className="w-[12%] px-3 py-2">Phone</th>
                 <th className="w-[9%] px-3 py-2">Location</th>
@@ -805,18 +825,32 @@ function resolveContactStatusValue(
   return "not_contacted";
 }
 
-function contactStatusEndpoints(
-  activity: LeadContactActivitySummary,
-  nextStatus: ContactStatusValue,
-) {
-  if (nextStatus === "not_contacted") return [];
-  if (nextStatus === "email") {
-    return activity.hasEmailContact ? [] : ["email"];
-  }
-  if (nextStatus === "phone") {
-    return activity.hasPhoneContact ? [] : ["call"];
-  }
-  return activity.hasEmailReply ? [] : ["reply"];
+function activityForContactStatus(
+  status: ContactStatusValue,
+): LeadContactActivitySummary {
+  return {
+    hasEmailContact: status === "email" || status === "reply",
+    hasPhoneContact: status === "phone",
+    hasEmailReply: status === "reply",
+  };
+}
+
+function contactStatusSetEndpoints(nextStatus: ContactStatusValue) {
+  if (nextStatus === "email") return ["email"] as const;
+  if (nextStatus === "phone") return ["call"] as const;
+  if (nextStatus === "reply") return ["reply"] as const;
+  return [] as const;
+}
+
+function progressLabelForContactStatus(status: ContactStatusValue) {
+  const stamp = new Intl.DateTimeFormat("ja", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date());
+  if (status === "email") return `メール ${stamp}`;
+  if (status === "phone") return `架電 ${stamp}`;
+  if (status === "reply") return `返信 ${stamp}`;
+  return stamp;
 }
 
 function contactStatusToneClass(status: ContactStatusValue) {

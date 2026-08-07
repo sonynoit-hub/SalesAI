@@ -9,6 +9,12 @@ import { logContactEvent } from "@/lib/leads/contact-events";
 
 export const runtime = "nodejs";
 
+const QUALIFY_PIPELINE_STATUSES = new Set<string>([
+  LeadStatus.NEW,
+  LeadStatus.QUALIFIED,
+  LeadStatus.RESEARCHED,
+]);
+
 type ReplyRouteContext = {
   params: Promise<{
     leadId: string;
@@ -43,11 +49,15 @@ export async function POST(
       );
     }
 
+    const nextStatus = QUALIFY_PIPELINE_STATUSES.has(lead.status)
+      ? lead.status
+      : LeadStatus.REPLIED;
+
     await prisma.$transaction(async (tx) => {
       await tx.lead.update({
         where: { id: leadId },
         data: {
-          status: LeadStatus.REPLIED,
+          status: nextStatus,
           tags: addOrReplaceLeadEventTag(lead.tags, LEAD_TAG_EMAIL_REPLIED),
         },
       });
@@ -73,7 +83,7 @@ export async function POST(
     return NextResponse.json({
       data: {
         leadId,
-        status: LeadStatus.REPLIED,
+        status: nextStatus,
         closedFollowUps: lead.followUpTasks.length,
       },
     });
