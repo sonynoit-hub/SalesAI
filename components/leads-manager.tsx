@@ -361,62 +361,52 @@ export function LeadsManager({
     const currentStatus = resolveContactStatusValue(row.contactActivity);
     if (currentStatus === nextStatus) return;
 
+    const previousActivity = row.contactActivity;
+
+    // Update UI immediately; roll back if the API fails.
+    setLocalContactByLeadId((current) => ({
+      ...current,
+      [row.leadId]: activityForContactStatus(nextStatus),
+    }));
     setWorkingStatusLeadId(row.leadId);
     setErrorMessage(null);
     setSuccessMessage(null);
 
     try {
-      // Reset first when switching between contact states so the select value sticks.
-      if (currentStatus !== "not_contacted") {
-        const resetResponse = await fetch(
-          `/api/leads/${row.leadId}/contact-status`,
-          { method: "DELETE" },
+      const response = await fetch(`/api/leads/${row.leadId}/contact-status`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status: nextStatus }),
+      });
+
+      let payload: { error?: { message?: string } } = {};
+      try {
+        payload = await response.json();
+      } catch {
+        payload = {};
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          payload?.error?.message ??
+            `連絡進捗を更新できませんでした。（${response.status}）`,
         );
-        const resetPayload = await resetResponse.json();
-        if (!resetResponse.ok) {
-          throw new Error(
-            resetPayload?.error?.message ??
-              "連絡ステータスを更新できませんでした。",
-          );
-        }
       }
 
-      if (nextStatus === "not_contacted") {
-        setLocalContactByLeadId((current) => ({
-          ...current,
-          [row.leadId]: activityForContactStatus("not_contacted"),
-        }));
-        setSuccessMessage(
-          `${row.companyName || "リード"} を未連絡に戻しました。`,
-        );
-        return;
-      }
-
-      for (const endpoint of contactStatusSetEndpoints(nextStatus)) {
-        const response = await fetch(`/api/leads/${row.leadId}/${endpoint}`, {
-          method: "POST",
-        });
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            payload?.error?.message ?? "連絡ステータスを更新できませんでした。",
-          );
-        }
-      }
-
-      setLocalContactByLeadId((current) => ({
-        ...current,
-        [row.leadId]: activityForContactStatus(nextStatus),
-      }));
       setSuccessMessage(
-        `${row.companyName || "リード"} の連絡ステータスを更新しました。`,
+        nextStatus === "not_contacted"
+          ? `${row.companyName || "リード"} を未連絡に戻しました。`
+          : `${row.companyName || "リード"} の連絡進捗を更新しました。`,
       );
     } catch (error) {
+      setLocalContactByLeadId((current) => ({
+        ...current,
+        [row.leadId]: previousActivity,
+      }));
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : "連絡ステータスを更新できませんでした。",
+          : "連絡進捗を更新できませんでした。",
       );
     } finally {
       setWorkingStatusLeadId(null);
@@ -594,7 +584,7 @@ export function LeadsManager({
                 <th className="w-[22%] px-3 py-2">Company</th>
                 <th className="w-[13%] px-3 py-2">URL</th>
                 <th className="w-[9%] px-3 py-2">Confirm</th>
-                <th className="w-px whitespace-nowrap px-2 py-2">連絡</th>
+                <th className="whitespace-nowrap px-2 py-2">連絡進捗</th>
                 <th className="w-[20%] px-3 py-2">Email</th>
                 <th className="w-[12%] px-3 py-2">Phone</th>
                 <th className="w-[9%] px-3 py-2">Location</th>
@@ -796,15 +786,15 @@ function ContactStatusSelect({
 
   return (
     <select
-      aria-label="連絡ステータス"
-      className={`h-6 w-[5.75rem] cursor-pointer rounded-full border px-1.5 text-[11px] font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60 ${contactStatusToneClass(
+      aria-label="連絡進捗"
+      className={`h-6 min-w-[6.75rem] cursor-pointer rounded-full border px-2 text-[11px] font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60 ${contactStatusToneClass(
         value,
       )}`}
       disabled={disabled}
       onChange={(event) =>
         onChange(event.currentTarget.value as ContactStatusValue)
       }
-      title="連絡ステータスを記録"
+      title="連絡進捗を記録"
       value={value}
     >
       {CONTACT_STATUS_OPTIONS.map((option) => (
@@ -833,13 +823,6 @@ function activityForContactStatus(
     hasPhoneContact: status === "phone",
     hasEmailReply: status === "reply",
   };
-}
-
-function contactStatusSetEndpoints(nextStatus: ContactStatusValue) {
-  if (nextStatus === "email") return ["email"] as const;
-  if (nextStatus === "phone") return ["call"] as const;
-  if (nextStatus === "reply") return ["reply"] as const;
-  return [] as const;
 }
 
 function progressLabelForContactStatus(status: ContactStatusValue) {
