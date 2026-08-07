@@ -433,9 +433,6 @@ export function LeadsManager({
                 {pagination.totalCount === 0
                   ? "0件を表示"
                   : `${pagination.totalCount}件中 ${pageStart}-${pageEnd}件を表示`}
-                {missingContactRows.length > 0
-                  ? `（連絡先未設定 ${missingContactRows.length}件）`
-                  : ""}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
