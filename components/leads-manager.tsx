@@ -375,8 +375,12 @@ export function LeadsManager({
     nextStatus: ContactStatusValue,
   ) {
     if (isWorking || workingStatusLeadId) return;
+    if (nextStatus === "contacted") return;
 
-    const currentStatus = resolveContactStatusValue(row.contactActivity);
+    const currentStatus = resolveContactStatusValue(
+      row.contactActivity,
+      row.progressStatus,
+    );
     if (currentStatus === nextStatus) return;
 
     const previousActivity = row.contactActivity;
@@ -659,6 +663,7 @@ export function LeadsManager({
                       onChange={(nextStatus) =>
                         void updateContactStatus(row, nextStatus)
                       }
+                      progressStatus={row.progressStatus}
                     />
                   </td>
                   <td className="px-3 py-2">
@@ -778,12 +783,13 @@ function EmptyValue() {
 
 type ContactStatusValue =
   | "not_contacted"
+  | "contacted"
   | "email"
   | "phone"
   | "reply";
 
 const CONTACT_STATUS_OPTIONS: Array<{
-  value: ContactStatusValue;
+  value: Exclude<ContactStatusValue, "contacted">;
   label: string;
 }> = [
   { value: "not_contacted", label: "未連絡" },
@@ -797,13 +803,19 @@ function ContactStatusSelect({
   disabled,
   isWorking,
   onChange,
+  progressStatus,
 }: {
   activity: LeadContactActivitySummary;
   disabled?: boolean;
   isWorking?: boolean;
   onChange: (nextStatus: ContactStatusValue) => void;
+  progressStatus: string;
 }) {
-  const value = resolveContactStatusValue(activity);
+  const value = resolveContactStatusValue(activity, progressStatus);
+  const options =
+    value === "contacted"
+      ? [{ value: "contacted" as const, label: "連絡済み" }, ...CONTACT_STATUS_OPTIONS]
+      : CONTACT_STATUS_OPTIONS;
 
   return (
     <select
@@ -818,7 +830,7 @@ function ContactStatusSelect({
       title="連絡進捗を記録"
       value={value}
     >
-      {CONTACT_STATUS_OPTIONS.map((option) => (
+      {options.map((option) => (
         <option key={option.value} value={option.value}>
           {isWorking && option.value === value ? "更新中…" : option.label}
         </option>
@@ -829,10 +841,14 @@ function ContactStatusSelect({
 
 function resolveContactStatusValue(
   activity: LeadContactActivitySummary,
+  progressStatus?: string,
 ): ContactStatusValue {
   if (activity.hasEmailReply) return "reply";
   if (activity.hasEmailContact) return "email";
   if (activity.hasPhoneContact) return "phone";
+  if (["CONTACTED", "FOLLOW_UP"].includes(progressStatus?.toUpperCase() ?? "")) {
+    return "contacted";
+  }
   return "not_contacted";
 }
 
@@ -854,6 +870,7 @@ function progressLabelForContactStatus(status: ContactStatusValue) {
   if (status === "email") return `メール ${stamp}`;
   if (status === "phone") return `架電 ${stamp}`;
   if (status === "reply") return `返信 ${stamp}`;
+  if (status === "contacted") return `連絡済み ${stamp}`;
   return stamp;
 }
 
@@ -861,6 +878,7 @@ function contactStatusToneClass(status: ContactStatusValue) {
   if (status === "reply") return "border-emerald-200 bg-emerald-50 text-emerald-800";
   if (status === "email") return "border-sky-200 bg-sky-50 text-sky-800";
   if (status === "phone") return "border-indigo-200 bg-indigo-50 text-indigo-800";
+  if (status === "contacted") return "border-blue-200 bg-blue-50 text-blue-800";
   return "border-amber-200 bg-amber-50 text-amber-800";
 }
 
