@@ -569,7 +569,6 @@ export function LeadsManager({
                 }
                 value={filters.qualify}
               >
-                <option value="all">すべて</option>
                 <option value="unconfirmed">未確認</option>
                 <option value="qualified">見込み</option>
                 <option value="passed">見送り</option>
