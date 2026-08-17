@@ -186,31 +186,16 @@ export function priorityLabelJa(value: string) {
 }
 
 export type LeadStatusFilterGroup =
-  | "all"
   | "not_contacted"
-  | "contacted"
   | "email"
   | "phone"
   | "reply";
-
-export function leadMatchesStatusFilter(
-  status: string,
-  filter: LeadStatusFilterGroup,
-) {
-  if (filter === "all") return true;
-  const normalized = status.toUpperCase();
-  if (filter === "not_contacted") return normalized === "NOT_CONTACTED";
-  if (filter === "contacted") return normalized === "CONTACTED";
-  if (filter === "reply") return normalized === "REPLIED";
-  return false;
-}
 
 export function leadMatchesProgressFilter(
   status: string,
   activity: LeadContactFlags,
   filter: LeadStatusFilterGroup,
 ) {
-  if (filter === "all") return true;
   if (filter === "reply") {
     return resolveLeadProgressStatus(status, activity) === "REPLIED";
   }
@@ -225,13 +210,6 @@ export function leadMatchesProgressFilter(
       resolveLeadProgressStatus(status, activity) !== "REPLIED" &&
       !activity.hasEmailContact &&
       activity.hasPhoneContact
-    );
-  }
-  if (filter === "contacted") {
-    return (
-      resolveLeadProgressStatus(status, activity) === "CONTACTED" &&
-      !activity.hasEmailContact &&
-      !activity.hasPhoneContact
     );
   }
   return resolveLeadProgressStatus(status, activity) === "NOT_CONTACTED";

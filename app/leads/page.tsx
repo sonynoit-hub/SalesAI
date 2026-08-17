@@ -26,9 +26,7 @@ type LeadsPageProps = {
 
 const QUALIFY_FILTERS = new Set(["all", "unconfirmed", "qualified", "passed"]);
 const PROGRESS_FILTERS = new Set([
-  "all",
   "not_contacted",
-  "contacted",
   "email",
   "phone",
   "reply",

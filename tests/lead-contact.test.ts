@@ -5,7 +5,6 @@ import {
   latestLeadProgressAt,
   leadMatchesProgressFilter,
   leadMatchesQualifyFilter,
-  leadMatchesStatusFilter,
   leadProgressEventLabel,
   leadStatusLabelJa,
   nextQualifiedMarkStatus,
@@ -49,14 +48,6 @@ describe("lead status helpers", () => {
       resolveLeadStatusAfterContact(LeadStatus.WON),
       LeadStatus.WON,
     );
-  });
-
-  it("filters rows by status groups", () => {
-    assert.equal(leadMatchesStatusFilter("NOT_CONTACTED", "not_contacted"), true);
-    assert.equal(leadMatchesStatusFilter("CONTACTED", "not_contacted"), false);
-    assert.equal(leadMatchesStatusFilter("CONTACTED", "contacted"), true);
-    assert.equal(leadMatchesStatusFilter("REPLIED", "reply"), true);
-    assert.equal(leadMatchesStatusFilter("NEW", "all"), true);
   });
 });
 
@@ -114,10 +105,6 @@ describe("lead progress helpers", () => {
         "email",
       ),
       false,
-    );
-    assert.equal(
-      leadMatchesProgressFilter("CONTACTED", none, "contacted"),
-      true,
     );
   });
 

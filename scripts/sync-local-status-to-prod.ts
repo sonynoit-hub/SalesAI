@@ -19,6 +19,13 @@ const DRY_RUN = process.argv.includes("--dry-run");
 type ContactStatus = "not_contacted" | "email" | "phone" | "reply";
 type QualifyKind = "unconfirmed" | "qualified" | "passed";
 
+const PROGRESS_FILTERS: ContactStatus[] = [
+  "not_contacted",
+  "email",
+  "phone",
+  "reply",
+];
+
 type LocalRow = {
   companyName: string;
   domain: string;
@@ -161,7 +168,22 @@ function parseProdRows(html: string): ProdRow[] {
 }
 
 async function loadProdRows(): Promise<ProdRow[]> {
-  const firstUrl = `${BASE}/leads?qualify=all&progress=all`;
+  const seen = new Set<string>();
+  const rows: ProdRow[] = [];
+
+  for (const progress of PROGRESS_FILTERS) {
+    await loadProdRowsForProgress(progress, seen, rows);
+  }
+
+  return rows;
+}
+
+async function loadProdRowsForProgress(
+  progress: ContactStatus,
+  seen: Set<string>,
+  rows: ProdRow[],
+) {
+  const firstUrl = `${BASE}/leads?qualify=all&progress=${progress}`;
   const firstHtml = await (
     await fetch(firstUrl, {
       headers: { "user-agent": "Mozilla/5.0 SalesAI-sync" },
@@ -172,8 +194,6 @@ async function loadProdRows(): Promise<ProdRow[]> {
     firstHtml.replace(/<[^>]+>/g, " ").match(/(\d+)件中/)?.[1] || 0,
   );
   const pages = Math.max(1, Math.ceil(total / 50));
-  const seen = new Set<string>();
-  const rows: ProdRow[] = [];
 
   for (let page = 1; page <= pages; page += 1) {
     const url = page === 1 ? firstUrl : `${firstUrl}&page=${page}`;
@@ -192,8 +212,6 @@ async function loadProdRows(): Promise<ProdRow[]> {
       rows.push(row);
     }
   }
-
-  return rows;
 }
 
 async function patchQualify(prod: ProdRow, nextStatus: string) {
