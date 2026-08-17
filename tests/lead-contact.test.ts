@@ -68,9 +68,11 @@ describe("lead progress helpers", () => {
     hasEmailReply: false,
   };
 
-  it("derives outreach badge from メール/架電/返信 only", () => {
+  it("derives outreach progress from channel activity with legacy status fallback", () => {
     assert.equal(resolveLeadProgressStatus("NEW", none), "NOT_CONTACTED");
     assert.equal(resolveLeadProgressStatus("QUALIFIED", none), "NOT_CONTACTED");
+    assert.equal(resolveLeadProgressStatus("CONTACTED", none), "CONTACTED");
+    assert.equal(resolveLeadProgressStatus("REPLIED", none), "REPLIED");
     assert.equal(
       resolveLeadProgressStatus("NEW", { ...none, hasEmailContact: true }),
       "CONTACTED",
@@ -101,6 +103,14 @@ describe("lead progress helpers", () => {
     assert.equal(
       leadMatchesProgressFilter("NEW", { ...none, hasEmailReply: true }, "replied"),
       true,
+    );
+    assert.equal(
+      leadMatchesProgressFilter(
+        "REPLIED",
+        { ...none, hasEmailContact: true, hasEmailReply: true },
+        "contacted",
+      ),
+      false,
     );
   });
 

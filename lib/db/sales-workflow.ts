@@ -249,6 +249,7 @@ function leadProgressWhere(
   if (progress === "replied") {
     return {
       OR: [
+        { status: "REPLIED" },
         {
           contactEvents: {
             some: {
@@ -263,17 +264,41 @@ function leadProgressWhere(
   }
   if (progress === "contacted") {
     return {
-      OR: [
-        { status: { in: ["CONTACTED", "FOLLOW_UP"] } },
+      AND: [
         {
-          contactEvents: {
-            some: {
-              eventType: "contacted",
-            },
+          NOT: {
+            OR: [
+              {
+                status: {
+                  in: ["REPLIED", "MEETING", "WON", "LOST", "ARCHIVED"],
+                },
+              },
+              {
+                contactEvents: {
+                  some: {
+                    channel: "email",
+                    eventType: "replied",
+                  },
+                },
+              },
+              { tags: { has: LEAD_TAG_EMAIL_REPLIED } },
+            ],
           },
         },
-        { tags: { has: LEAD_TAG_EMAIL_CONTACTED } },
-        { tags: { has: LEAD_TAG_PHONE_CONTACTED } },
+        {
+          OR: [
+            { status: { in: ["CONTACTED", "FOLLOW_UP"] } },
+            {
+              contactEvents: {
+                some: {
+                  eventType: "contacted",
+                },
+              },
+            },
+            { tags: { has: LEAD_TAG_EMAIL_CONTACTED } },
+            { tags: { has: LEAD_TAG_PHONE_CONTACTED } },
+          ],
+        },
       ],
     };
   }

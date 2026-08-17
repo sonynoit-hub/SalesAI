@@ -55,8 +55,16 @@ export function resolveLeadProgressStatus(
     return normalized;
   }
 
+  if (normalized === "REPLIED") {
+    return "REPLIED";
+  }
+
   if (activity.hasEmailReply) {
     return "REPLIED";
+  }
+
+  if (normalized === "CONTACTED") {
+    return "CONTACTED";
   }
 
   if (activity.hasEmailContact || activity.hasPhoneContact) {
