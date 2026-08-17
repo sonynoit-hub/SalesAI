@@ -27,10 +27,11 @@ type LeadsPageProps = {
 const QUALIFY_FILTERS = new Set(["all", "unconfirmed", "qualified", "passed"]);
 const PROGRESS_FILTERS = new Set([
   "all",
-  "not_yet",
+  "not_contacted",
   "contacted",
-  "replied",
-  "closed",
+  "email",
+  "phone",
+  "reply",
 ]);
 
 export default async function LeadsPage({ searchParams }: LeadsPageProps) {

@@ -243,62 +243,55 @@ function leadProgressWhere(
   progress: LeadStatusFilterGroup,
 ): Prisma.LeadWhereInput | null {
   if (progress === "all") return null;
-  if (progress === "closed") {
-    return { status: { in: ["MEETING", "WON", "LOST"] } };
-  }
-  if (progress === "replied") {
+  if (progress === "reply") return repliedProgressWhere();
+  if (progress === "email") {
     return {
-      OR: [
-        { status: "REPLIED" },
+      AND: [
+        noReplyProgressWhere(),
         {
-          contactEvents: {
-            some: {
-              channel: "email",
-              eventType: "replied",
+          OR: [
+            {
+              contactEvents: {
+                some: {
+                  channel: "email",
+                  eventType: "contacted",
+                },
+              },
             },
-          },
+            { tags: { has: LEAD_TAG_EMAIL_CONTACTED } },
+          ],
         },
-        { tags: { has: LEAD_TAG_EMAIL_REPLIED } },
+      ],
+    };
+  }
+  if (progress === "phone") {
+    return {
+      AND: [
+        noReplyProgressWhere(),
+        noEmailContactProgressWhere(),
+        {
+          OR: [
+            {
+              contactEvents: {
+                some: {
+                  channel: "phone",
+                  eventType: "contacted",
+                },
+              },
+            },
+            { tags: { has: LEAD_TAG_PHONE_CONTACTED } },
+          ],
+        },
       ],
     };
   }
   if (progress === "contacted") {
     return {
       AND: [
-        {
-          NOT: {
-            OR: [
-              {
-                status: {
-                  in: ["REPLIED", "MEETING", "WON", "LOST", "ARCHIVED"],
-                },
-              },
-              {
-                contactEvents: {
-                  some: {
-                    channel: "email",
-                    eventType: "replied",
-                  },
-                },
-              },
-              { tags: { has: LEAD_TAG_EMAIL_REPLIED } },
-            ],
-          },
-        },
-        {
-          OR: [
-            { status: { in: ["CONTACTED", "FOLLOW_UP"] } },
-            {
-              contactEvents: {
-                some: {
-                  eventType: "contacted",
-                },
-              },
-            },
-            { tags: { has: LEAD_TAG_EMAIL_CONTACTED } },
-            { tags: { has: LEAD_TAG_PHONE_CONTACTED } },
-          ],
-        },
+        noReplyProgressWhere(),
+        noEmailContactProgressWhere(),
+        noPhoneContactProgressWhere(),
+        { status: { in: ["CONTACTED", "FOLLOW_UP"] } },
       ],
     };
   }
@@ -317,6 +310,61 @@ function leadProgressWhere(
       { NOT: { tags: { has: LEAD_TAG_EMAIL_CONTACTED } } },
       { NOT: { tags: { has: LEAD_TAG_PHONE_CONTACTED } } },
       { NOT: { tags: { has: LEAD_TAG_EMAIL_REPLIED } } },
+    ],
+  };
+}
+
+function repliedProgressWhere(): Prisma.LeadWhereInput {
+  return {
+    OR: [
+      { status: "REPLIED" },
+      {
+        contactEvents: {
+          some: {
+            channel: "email",
+            eventType: "replied",
+          },
+        },
+      },
+      { tags: { has: LEAD_TAG_EMAIL_REPLIED } },
+    ],
+  };
+}
+
+function noReplyProgressWhere(): Prisma.LeadWhereInput {
+  return {
+    NOT: repliedProgressWhere(),
+  };
+}
+
+function noEmailContactProgressWhere(): Prisma.LeadWhereInput {
+  return {
+    AND: [
+      {
+        contactEvents: {
+          none: {
+            channel: "email",
+            eventType: "contacted",
+          },
+        },
+      },
+      { NOT: { tags: { has: LEAD_TAG_EMAIL_CONTACTED } } },
+    ],
+  };
+}
+
+function noPhoneContactProgressWhere(): Prisma.LeadWhereInput {
+  return {
+    AND: [
+      {
+        contactEvents: {
+          none: {
+            channel: "phone",
+            eventType: "contacted",
+          },
+        },
+      },
+      { NOT: { tags: { has: LEAD_TAG_PHONE_CONTACTED } } },
     ],
   };
 }

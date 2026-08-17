@@ -52,11 +52,10 @@ describe("lead status helpers", () => {
   });
 
   it("filters rows by status groups", () => {
-    assert.equal(leadMatchesStatusFilter("NEW", "not_yet"), true);
-    assert.equal(leadMatchesStatusFilter("CONTACTED", "not_yet"), false);
+    assert.equal(leadMatchesStatusFilter("NOT_CONTACTED", "not_contacted"), true);
+    assert.equal(leadMatchesStatusFilter("CONTACTED", "not_contacted"), false);
     assert.equal(leadMatchesStatusFilter("CONTACTED", "contacted"), true);
-    assert.equal(leadMatchesStatusFilter("REPLIED", "replied"), true);
-    assert.equal(leadMatchesStatusFilter("WON", "closed"), true);
+    assert.equal(leadMatchesStatusFilter("REPLIED", "reply"), true);
     assert.equal(leadMatchesStatusFilter("NEW", "all"), true);
   });
 });
@@ -93,24 +92,32 @@ describe("lead progress helpers", () => {
 
   it("filters by derived progress, not only stored status", () => {
     assert.equal(
-      leadMatchesProgressFilter("NEW", { ...none, hasEmailContact: true }, "contacted"),
+      leadMatchesProgressFilter("NEW", { ...none, hasEmailContact: true }, "email"),
       true,
     );
     assert.equal(
-      leadMatchesProgressFilter("NEW", { ...none, hasEmailContact: true }, "not_yet"),
+      leadMatchesProgressFilter("NEW", { ...none, hasEmailContact: true }, "not_contacted"),
       false,
     );
     assert.equal(
-      leadMatchesProgressFilter("NEW", { ...none, hasEmailReply: true }, "replied"),
+      leadMatchesProgressFilter("NEW", { ...none, hasPhoneContact: true }, "phone"),
+      true,
+    );
+    assert.equal(
+      leadMatchesProgressFilter("NEW", { ...none, hasEmailReply: true }, "reply"),
       true,
     );
     assert.equal(
       leadMatchesProgressFilter(
         "REPLIED",
         { ...none, hasEmailContact: true, hasEmailReply: true },
-        "contacted",
+        "email",
       ),
       false,
+    );
+    assert.equal(
+      leadMatchesProgressFilter("CONTACTED", none, "contacted"),
+      true,
     );
   });
 

@@ -187,20 +187,11 @@ export function priorityLabelJa(value: string) {
 
 export type LeadStatusFilterGroup =
   | "all"
-  | "not_yet"
+  | "not_contacted"
   | "contacted"
-  | "replied"
-  | "closed";
-
-const FILTER_GROUP_STATUSES: Record<
-  Exclude<LeadStatusFilterGroup, "all">,
-  string[]
-> = {
-  not_yet: ["NOT_CONTACTED", "NEW", "RESEARCHED", "QUALIFIED"],
-  contacted: ["CONTACTED", "FOLLOW_UP"],
-  replied: ["REPLIED"],
-  closed: ["MEETING", "WON", "LOST", "ARCHIVED"],
-};
+  | "email"
+  | "phone"
+  | "reply";
 
 export function leadMatchesStatusFilter(
   status: string,
@@ -208,7 +199,10 @@ export function leadMatchesStatusFilter(
 ) {
   if (filter === "all") return true;
   const normalized = status.toUpperCase();
-  return FILTER_GROUP_STATUSES[filter].includes(normalized);
+  if (filter === "not_contacted") return normalized === "NOT_CONTACTED";
+  if (filter === "contacted") return normalized === "CONTACTED";
+  if (filter === "reply") return normalized === "REPLIED";
+  return false;
 }
 
 export function leadMatchesProgressFilter(
@@ -216,8 +210,29 @@ export function leadMatchesProgressFilter(
   activity: LeadContactFlags,
   filter: LeadStatusFilterGroup,
 ) {
-  return leadMatchesStatusFilter(
-    resolveLeadProgressStatus(status, activity),
-    filter,
-  );
+  if (filter === "all") return true;
+  if (filter === "reply") {
+    return resolveLeadProgressStatus(status, activity) === "REPLIED";
+  }
+  if (filter === "email") {
+    return (
+      resolveLeadProgressStatus(status, activity) !== "REPLIED" &&
+      activity.hasEmailContact
+    );
+  }
+  if (filter === "phone") {
+    return (
+      resolveLeadProgressStatus(status, activity) !== "REPLIED" &&
+      !activity.hasEmailContact &&
+      activity.hasPhoneContact
+    );
+  }
+  if (filter === "contacted") {
+    return (
+      resolveLeadProgressStatus(status, activity) === "CONTACTED" &&
+      !activity.hasEmailContact &&
+      !activity.hasPhoneContact
+    );
+  }
+  return resolveLeadProgressStatus(status, activity) === "NOT_CONTACTED";
 }

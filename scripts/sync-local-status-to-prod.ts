@@ -304,7 +304,7 @@ async function main() {
 
   if (!DRY_RUN) {
     const verify = await (
-      await fetch(`${BASE}/leads?qualify=qualified&progress=not_yet`, {
+      await fetch(`${BASE}/leads?qualify=qualified&progress=not_contacted`, {
         headers: { "user-agent": "Mozilla/5.0 SalesAI-sync" },
         cache: "no-store",
       })
