@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { LeadsExcelImport } from "@/components/leads-excel-import";
 import type { LeadContactActivitySummary } from "@/components/lead-tracking-actions";
 import { formatIndustryJa } from "@/lib/industries";
@@ -71,6 +71,11 @@ const emptyForm: LeadFormState = {
   notes: "",
 };
 
+type ScopedLocalValues<T> = {
+  scopeKey: string;
+  values: Record<string, T>;
+};
+
 function rowToForm(row: LeadManageRow): LeadFormState {
   return {
     companyName: row.companyName,
@@ -107,12 +112,18 @@ export function LeadsManager({
   const [isWorking, setIsWorking] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [localStatusByLeadId, setLocalStatusByLeadId] = useState<
-    Record<string, string>
-  >({});
-  const [localContactByLeadId, setLocalContactByLeadId] = useState<
-    Record<string, LeadContactActivitySummary>
-  >({});
+  const overrideScopeKey = [
+    filters.qualify,
+    filters.progress,
+    filters.location,
+    pagination.page,
+  ].join("|");
+  const [localStatusState, setLocalStatusState] = useState<
+    ScopedLocalValues<string>
+  >({ scopeKey: "", values: {} });
+  const [localContactState, setLocalContactState] = useState<
+    ScopedLocalValues<LeadContactActivitySummary>
+  >({ scopeKey: "", values: {} });
   const [workingStatusLeadId, setWorkingStatusLeadId] = useState<string | null>(
     null,
   );
@@ -123,16 +134,20 @@ export function LeadsManager({
     found: number;
   } | null>(null);
 
-  // Keep Confirm/連絡 edits visible in the current list; clear when filters/page change.
-  useEffect(() => {
-    setLocalStatusByLeadId({});
-    setLocalContactByLeadId({});
-  }, [
-    filters.qualify,
-    filters.progress,
-    filters.location,
-    pagination.page,
-  ]);
+  const localStatusByLeadId = useMemo(
+    () =>
+      localStatusState.scopeKey === overrideScopeKey
+        ? localStatusState.values
+        : {},
+    [localStatusState, overrideScopeKey],
+  );
+  const localContactByLeadId = useMemo(
+    () =>
+      localContactState.scopeKey === overrideScopeKey
+        ? localContactState.values
+        : {},
+    [localContactState, overrideScopeKey],
+  );
 
   const displayRows = useMemo(() => {
     return rows.map((row) => {
@@ -335,9 +350,12 @@ export function LeadsManager({
             ? `${row.companyName || "リード"} を見送りにしました（レコードは残します）。`
             : `${row.companyName || "リード"} を未確認に戻しました。`,
       );
-      setLocalStatusByLeadId((current) => ({
-        ...current,
-        [row.leadId]: nextStatus,
+      setLocalStatusState((current) => ({
+        scopeKey: overrideScopeKey,
+        values: {
+          ...(current.scopeKey === overrideScopeKey ? current.values : {}),
+          [row.leadId]: nextStatus,
+        },
       }));
       // Do not refresh: keep the row in the current filter view so Confirm
       // changes (見込み → 見送り / 未確認) stay visible until the filter changes.
@@ -364,9 +382,12 @@ export function LeadsManager({
     const previousActivity = row.contactActivity;
 
     // Update UI immediately; roll back if the API fails.
-    setLocalContactByLeadId((current) => ({
-      ...current,
-      [row.leadId]: activityForContactStatus(nextStatus),
+    setLocalContactState((current) => ({
+      scopeKey: overrideScopeKey,
+      values: {
+        ...(current.scopeKey === overrideScopeKey ? current.values : {}),
+        [row.leadId]: activityForContactStatus(nextStatus),
+      },
     }));
     setWorkingStatusLeadId(row.leadId);
     setErrorMessage(null);
@@ -399,9 +420,12 @@ export function LeadsManager({
           : `${row.companyName || "リード"} の連絡進捗を更新しました。`,
       );
     } catch (error) {
-      setLocalContactByLeadId((current) => ({
-        ...current,
-        [row.leadId]: previousActivity,
+      setLocalContactState((current) => ({
+        scopeKey: overrideScopeKey,
+        values: {
+          ...(current.scopeKey === overrideScopeKey ? current.values : {}),
+          [row.leadId]: previousActivity,
+        },
       }));
       setErrorMessage(
         error instanceof Error
