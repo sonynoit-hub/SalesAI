@@ -564,7 +564,7 @@ export default function LeadSearchPage() {
 
           {analysisMeta?.diagnostics ? (
             <div className="mb-3 rounded-md border border-slate-200 bg-white p-3 text-xs text-slate-600">
-              <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-8">
+              <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-9">
                 <Metric label="Requested" value={analysisMeta.diagnostics.requested} />
                 <Metric label="Raw results" value={analysisMeta.diagnostics.rawResults} />
                 <Metric
@@ -583,6 +583,10 @@ export default function LeadSearchPage() {
                 <Metric
                   label="Removed"
                   value={analysisMeta.diagnostics.removedByEvidence}
+                />
+                <Metric
+                  label="Already known"
+                  value={analysisMeta.diagnostics.skippedKnownDomains ?? 0}
                 />
                 <Metric label="Final shown" value={analysisMeta.diagnostics.finalShown} />
               </div>
@@ -752,6 +756,13 @@ function resolveSearchDiagnosticMessage(diagnostics: SearchDiagnostics) {
 
   if (diagnostics.officialCandidates === 0) {
     return "Search returned raw results, but none looked like official company homepage or about pages.";
+  }
+
+  if (
+    diagnostics.finalShown === 0 &&
+    (diagnostics.skippedKnownDomains ?? 0) > 0
+  ) {
+    return `${diagnostics.skippedKnownDomains} matching company pages were already known, so they were skipped. Try a broader product hint or increase the return count to dig deeper.`;
   }
 
   if (diagnostics.crawlAttempted === 0) {

@@ -161,6 +161,39 @@ export async function applyDatabaseStatuses(
   }
 }
 
+export async function getKnownCompanyDomainKeys(): Promise<Set<string>> {
+  const keys = new Set<string>();
+
+  try {
+    const [companies, candidates] = await Promise.all([
+      prisma.company.findMany({
+        select: {
+          normalizedDomain: true,
+          websiteUrl: true,
+        },
+      }),
+      prisma.searchCandidate.findMany({
+        select: {
+          normalizedDomain: true,
+          websiteUrl: true,
+        },
+      }),
+    ]);
+
+    for (const company of companies) {
+      addDomainKeys(keys, company.normalizedDomain, company.websiteUrl);
+    }
+
+    for (const candidate of candidates) {
+      addDomainKeys(keys, candidate.normalizedDomain, candidate.websiteUrl);
+    }
+  } catch {
+    return keys;
+  }
+
+  return keys;
+}
+
 async function readSearchRuns(): Promise<StoredSearchRun[]> {
   try {
     const content = await readFile(searchRunsPath, "utf8");
@@ -208,6 +241,38 @@ function buildDatabaseStatus({
   }
 
   return { state: "new" };
+}
+
+function addDomainKeys(keys: Set<string>, ...values: Array<string | null>) {
+  for (const value of values) {
+    const key = normalizeDomainKey(value);
+
+    if (key) {
+      keys.add(key);
+    }
+  }
+}
+
+function normalizeDomainKey(value: string | null) {
+  if (!value) {
+    return "";
+  }
+
+  const hostname = parseHostname(value);
+
+  return hostname
+    .toLowerCase()
+    .replace(/^(www|m|en|jp|ja|global|corp|corporate)\./, "")
+    .replace(/\.$/, "")
+    .trim();
+}
+
+function parseHostname(value: string) {
+  try {
+    return new URL(value).hostname;
+  } catch {
+    return value;
+  }
 }
 
 function toCandidateStatus(status: CompanyDatabaseStatus | undefined) {

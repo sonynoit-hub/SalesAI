@@ -118,5 +118,6 @@ export type SearchDiagnostics = {
   crawlError?: string;
   passedEvidence: number;
   removedByEvidence: number;
+  skippedKnownDomains?: number;
   finalShown: number;
 };

@@ -1,7 +1,10 @@
 import * as cheerio from "cheerio";
 import type { SearchAnalyzeRequest } from "@/lib/search-analysis/schemas";
 import { generateSearchQueryStrategy } from "@/lib/search-analysis/query-generator";
-import { applyDatabaseStatuses } from "@/lib/search-analysis/store";
+import {
+  applyDatabaseStatuses,
+  getKnownCompanyDomainKeys,
+} from "@/lib/search-analysis/store";
 import { searchSearxng, type SearxngResult } from "@/lib/search-analysis/search";
 import type {
   OpportunityResult,
@@ -113,7 +116,8 @@ export async function runStrictPublicCompanySearch(
     buildStrictSearchPlan(request),
   );
   const searchQueries = buildHybridSearchQueries(request, queryStrategy.searchQueries);
-  const resultByUrl = new Map<string, OpportunityResult>();
+  const knownDomainKeys = await getKnownCompanyDomainKeys();
+  const resultByCompanyKey = new Map<string, OpportunityResult>();
   let rawResultsTotal = 0;
   let officialCandidatesTotal = 0;
   let crawlAttemptedTotal = 0;
@@ -122,10 +126,11 @@ export async function runStrictPublicCompanySearch(
   const crawlFilteredTotal = 0;
   let passedEvidenceTotal = 0;
   let removedByEvidenceTotal = 0;
+  let skippedKnownDomainsTotal = 0;
   let sawSearchFailure = false;
 
   for (let attempt = 1; attempt <= STRICT_SEARCH_ATTEMPTS; attempt += 1) {
-    if (resultByUrl.size >= request.resultLimit) {
+    if (resultByCompanyKey.size >= request.resultLimit) {
       break;
     }
 
@@ -158,22 +163,30 @@ export async function runStrictPublicCompanySearch(
 
     const enriched = enrichment.candidates;
     for (const candidate of enriched) {
-      const result = toOpportunityResult(candidate, request, resultByUrl.size);
-      if (!result.websiteUrl || resultByUrl.has(result.websiteUrl)) {
+      const result = toOpportunityResult(candidate, request, resultByCompanyKey.size);
+      const key = result.websiteUrl ? normalizeHostKey(result.websiteUrl) : "";
+
+      if (!key || resultByCompanyKey.has(key)) {
         continue;
       }
-      resultByUrl.set(result.websiteUrl, result);
+
+      if (knownDomainKeys.has(key)) {
+        skippedKnownDomainsTotal += 1;
+        continue;
+      }
+
+      resultByCompanyKey.set(key, result);
     }
   }
 
-  if (resultByUrl.size === 0 && sawSearchFailure) {
+  if (resultByCompanyKey.size === 0 && sawSearchFailure) {
     throw new Error(
       "Public web search is unavailable. Start SearXNG on 127.0.0.1:8080 and try again.",
     );
   }
 
   const results = await applyDatabaseStatuses(
-    prioritizeStrictResults(Array.from(resultByUrl.values())).slice(
+    prioritizeStrictResults(Array.from(resultByCompanyKey.values())).slice(
       0,
       request.resultLimit,
     ),
@@ -207,6 +220,7 @@ export async function runStrictPublicCompanySearch(
         crawlFiltered: crawlFilteredTotal,
         passedEvidence: passedEvidenceTotal,
         removedByEvidence: removedByEvidenceTotal,
+        skippedKnownDomains: skippedKnownDomainsTotal,
         finalShown: results.length,
       },
       searchQueries,
