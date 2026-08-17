@@ -586,9 +586,7 @@ export function LeadsManager({
                 }
                 value={filters.progress}
               >
-                <option value="all">すべて</option>
                 <option value="not_contacted">未連絡</option>
-                <option value="contacted">連絡済み</option>
                 <option value="email">メール済み</option>
                 <option value="phone">電話済み</option>
                 <option value="reply">返信あり</option>

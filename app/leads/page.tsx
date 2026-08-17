@@ -42,7 +42,7 @@ export default async function LeadsPage({ searchParams }: LeadsPageProps) {
     progress: getEnumParam(
       params.progress,
       PROGRESS_FILTERS,
-      "all",
+      "not_contacted",
     ) as LeadStatusFilterGroup,
   };
   const page = parsePositiveInteger(getStringParam(params.page), 1);
