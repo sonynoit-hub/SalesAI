@@ -127,7 +127,7 @@ function parseProdRows(html: string): ProdRow[] {
   const text = unescapeRsc(html);
   const rows: ProdRow[] = [];
   const re =
-    /"leadId":"([0-9a-f-]+)","companyId":"[0-9a-f-]+","companyName":"([^"]*)","websiteUrl":"([^"]*)","industry":"([^"]*)","location":"([^"]*)","address":"([^"]*)","contactName":"([^"]*)","contactTitle":"([^"]*)","email":"([^"]*)","phone":"([^"]*)","contactFormUrl":"[^"]*","hasOutreachChannel":(?:true|false),"status":"([A-Z_]+)","progressStatus":"[A-Z_]+","priority":"([A-Z]+)","notes":"(.*?)","contactActivity":\{"hasEmailContact":(true|false),"hasPhoneContact":(true|false),"hasEmailReply":(true|false)\}/gs;
+    /"leadId":"([0-9a-f-]+)","companyId":"[0-9a-f-]+","companyName":"([^"]*)","websiteUrl":"([^"]*)","industry":"([^"]*)","location":"([^"]*)","address":"([^"]*)","contactName":"([^"]*)","contactTitle":"([^"]*)","email":"([^"]*)","phone":"([^"]*)","contactFormUrl":"[^"]*","hasOutreachChannel":(?:true|false),"status":"([A-Z_]+)","progressStatus":"[A-Z_]+","priority":"([A-Z]+)","notes":"([\s\S]*?)","contactActivity":\{"hasEmailContact":(true|false),"hasPhoneContact":(true|false),"hasEmailReply":(true|false)\}/g;
 
   for (const match of text.matchAll(re)) {
     const hasEmailContact = match[14] === "true";
