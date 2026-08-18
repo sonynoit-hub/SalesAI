@@ -8,6 +8,8 @@ import {
   DEFAULT_TARGET_COMPANY_COUNT,
   MAX_TARGET_COMPANY_COUNT,
 } from "@/lib/search-analysis/constants";
+import { shouldUseJapanMemorySourcingPlaybook } from "@/lib/search-analysis/playbooks/japan-memory-sourcing";
+import { scoreSupplierEvidence } from "@/lib/search-analysis/supplier-evidence";
 
 export type SearxngResult = {
   title?: string;
@@ -39,6 +41,15 @@ export type SearchRefinementResult = {
     passedEvidence: number;
     removedByEvidence: number;
   };
+};
+
+type SearchContext = {
+  referenceKeyword?: string;
+  location?: string;
+  opportunityDescription?: string;
+  searchRole?: "buyer" | "seller" | "auto";
+  resultLimit?: number;
+  searchPlan?: OpportunitySearchPlan;
 };
 
 const SEARCH_PAGES_PER_QUERY = 5;
@@ -117,11 +128,7 @@ async function searchSearxngOnce({
 
 export async function runSearchQueries(
   queries: string[],
-  request?: {
-    location?: string;
-    opportunityDescription?: string;
-    searchPlan?: OpportunitySearchPlan;
-  },
+  request?: SearchContext,
 ) {
   const pipeline = await runSearchPipeline(queries, request);
   return pipeline.results;
@@ -129,12 +136,7 @@ export async function runSearchQueries(
 
 export async function runSearchPipeline(
   queries: string[],
-  request?: {
-    location?: string;
-    opportunityDescription?: string;
-    resultLimit?: number;
-    searchPlan?: OpportunitySearchPlan;
-  },
+  request?: SearchContext,
 ): Promise<SearchPipelineResult> {
   const settled = await collectSearchResults(queries, searchPageCount(request?.resultLimit));
   const failed = settled.filter((result) => result.status === "rejected");
@@ -217,16 +219,12 @@ export function refineSearchResultsWithEvidence({
   results,
 }: {
   crawledPages: CrawledPage[];
-  request?: {
-    location?: string;
-    opportunityDescription?: string;
-    resultLimit?: number;
-    searchPlan?: OpportunitySearchPlan;
-  };
+  request?: SearchContext;
   results: SearxngResult[];
 }): SearchRefinementResult {
   const targetsJapan = isJapanLocation(request?.location ?? "");
   const limit = refinedCandidateLimit(request?.resultLimit);
+  const sourcing = isSourcingSearch(request);
 
   const companyResults = results
     .filter((result) => result.url && result.title)
@@ -247,9 +245,10 @@ export function refineSearchResultsWithEvidence({
         evidence: evaluateResultEvidence(evidenceResult, request, targetsJapan),
       };
     })
+    .filter((result) => !sourcing || isSupplierFitResult(result))
     .filter(createUniqueCompanyFilter());
 
-  const refinedResults = companyResults.slice(0, limit);
+  const refinedResults = prioritizeSupplierFitResults(companyResults).slice(0, limit);
 
   return {
     results: refinedResults,
@@ -269,12 +268,7 @@ function selectOfficialCompanyResults(
     targetsJapan,
   }: {
     locationProfile: LocationSearchProfile | null;
-    request?: {
-      location?: string;
-      opportunityDescription?: string;
-      resultLimit?: number;
-      searchPlan?: OpportunitySearchPlan;
-    };
+    request?: SearchContext;
     seen: Set<string>;
     targetsJapan: boolean;
   },
@@ -288,12 +282,14 @@ function selectOfficialCompanyResults(
       ...result,
       evidence: evaluateResultEvidence(result, request, targetsJapan),
     }))
+    .filter((result) => !isSourcingSearch(request) || isSupplierFitResult(result))
     .filter((result) => {
       const key = normalizeCompanyKey(result.url ?? "");
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
     })
+    .sort((left, right) => resultSupplierFitScore(right) - resultSupplierFitScore(left))
     .slice(0, candidateLimit(request?.resultLimit));
 }
 
@@ -722,11 +718,7 @@ function buildKeywordScriptQuery(searchPlan: OpportunitySearchPlan) {
 
 function evaluateResultEvidence(
   result: SearxngResult,
-  request: {
-    location?: string;
-    opportunityDescription?: string;
-    searchPlan?: OpportunitySearchPlan;
-  } | undefined,
+  request: SearchContext | undefined,
   targetsJapan: boolean,
 ): ResultEvidence {
   const url = safeUrl(result.url ?? "");
@@ -752,6 +744,9 @@ function evaluateResultEvidence(
     "企業情報",
     "住所",
   ]);
+  const supplierEvidence = isSourcingSearch(request)
+    ? scoreSupplierEvidence(originalText)
+    : undefined;
   const urlType = resolveUrlType(path);
   const passed: string[] = [];
   const missing: string[] = [];
@@ -805,6 +800,12 @@ function evaluateResultEvidence(
     missing.push("Avoided page type signal present");
   }
 
+  if (supplierEvidence?.matchedSellSide.length) {
+    passed.push(`Supplier fit: ${supplierEvidence.matchedSellSide.join(", ")}`);
+  } else if (supplierEvidence && !supplierEvidence.looksLikeSupplier) {
+    missing.push("ITAD / PC reuse / used parts supplier signal");
+  }
+
   return {
     passed: uniqueLabels(passed).slice(0, 6),
     missing: uniqueLabels(missing).slice(0, 6),
@@ -813,7 +814,39 @@ function evaluateResultEvidence(
     matchedLocation,
     matchedIndustry,
     matchedOfficial,
+    supplierFitScore: supplierEvidence?.score,
+    matchedSupplierSignals: supplierEvidence?.matchedSellSide,
+    matchedNoiseSignals: supplierEvidence?.matchedNoise,
   };
+}
+
+function isSourcingSearch(request: SearchContext | undefined) {
+  if (!request) return false;
+
+  return shouldUseJapanMemorySourcingPlaybook({
+    referenceKeyword:
+      request.referenceKeyword ??
+      request.searchPlan?.intentSummary ??
+      request.opportunityDescription ??
+      "",
+    opportunityDescription: request.opportunityDescription,
+    location: request.location,
+    searchRole: request.searchRole,
+  });
+}
+
+function isSupplierFitResult(result: SearxngResult) {
+  return (result.evidence?.supplierFitScore ?? 0) > 0;
+}
+
+function resultSupplierFitScore(result: SearxngResult) {
+  return result.evidence?.supplierFitScore ?? 0;
+}
+
+function prioritizeSupplierFitResults(results: SearxngResult[]) {
+  return [...results].sort(
+    (left, right) => resultSupplierFitScore(right) - resultSupplierFitScore(left),
+  );
 }
 
 function chooseTerms(terms: string[], language: "ja" | "en", limit: number) {

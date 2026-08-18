@@ -9,6 +9,7 @@ export const searchAnalyzeRequestSchema = z.object({
   opportunityDescription: z.string().trim().min(2).max(500).optional(),
   industry: z.string().trim().max(80).optional().default(""),
   location: z.string().trim().max(80).optional().default(""),
+  searchRole: z.enum(["buyer", "seller", "auto"]).optional().default("auto"),
   excludeKeywords: z
     .array(z.string().trim().min(1).max(80))
     .max(12)
@@ -36,6 +37,7 @@ export const searchAnalyzeRequestSchema = z.object({
     opportunityDescription: referenceKeyword,
     industry: value.industry,
     location: value.location,
+    searchRole: value.searchRole,
     excludeKeywords: value.excludeKeywords,
     targetCompanyCount,
     resultLimit: targetCompanyCount,

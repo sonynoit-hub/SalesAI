@@ -86,6 +86,7 @@ Useful variants:
 
 ```bash
 npm run dev:up -- --with-queue   # also poll the auto-send queue
+npm run dev:up -- --skip-seed    # keep existing data untouched
 npm run dev:up -- --containers   # containers + Ollama only
 npm run dev:down                 # stop Docker services
 ```

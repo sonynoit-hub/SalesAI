@@ -1,0 +1,8 @@
+{
+  "npm.autoDetect": "off",
+  "npm.exclude": ["**/.next/**", "**/.venv/**", "**/work/**"],
+  "files.watcherExclude": {
+    "**/.next/**": true,
+    "**/.venv/**": true
+  }
+}

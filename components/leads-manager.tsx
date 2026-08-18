@@ -7,13 +7,7 @@ import { LeadsExcelImport } from "@/components/leads-excel-import";
 import type { LeadContactActivitySummary } from "@/components/lead-tracking-actions";
 import { formatIndustryJa } from "@/lib/industries";
 import {
-  LEAD_PRIORITY_OPTIONS,
-  LEAD_STATUS_OPTIONS,
-} from "@/lib/leads/constants";
-import {
-  leadStatusLabelJa,
   nextQualifiedMarkStatus,
-  priorityLabelJa,
   qualifyMarkLabel,
   resolveQualifyMark,
 } from "@/lib/leads/status";
@@ -295,10 +289,11 @@ export function LeadsManager({
     setSuccessMessage(null);
 
     try {
+      const { companyName, websiteUrl, address, email } = createForm;
       const response = await fetch("/api/leads", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(createForm),
+        body: JSON.stringify({ companyName, websiteUrl, address, email }),
       });
       const payload = await response.json();
 
@@ -937,38 +932,6 @@ function LeadFormFields({
         placeholder="https://company.com"
         value={form.websiteUrl}
       />
-      <Field
-        label="担当者名"
-        onChange={(value) => update("contactName", value)}
-        value={form.contactName}
-      />
-      <Field
-        label="役職"
-        onChange={(value) => update("contactTitle", value)}
-        value={form.contactTitle}
-      />
-      <Field
-        label="メール"
-        onChange={(value) => update("email", value)}
-        type="email"
-        value={form.email}
-      />
-      <Field
-        label="電話番号"
-        onChange={(value) => update("phone", value)}
-        value={form.phone}
-      />
-      <Field
-        label="業種"
-        onChange={(value) => update("industry", value)}
-        value={form.industry}
-      />
-      <Field
-        label="所在地"
-        onChange={(value) => update("location", value)}
-        placeholder="都道府県"
-        value={form.location}
-      />
       <label className="block text-sm md:col-span-2">
         <span className="font-medium text-slate-700">住所</span>
         <input
@@ -978,42 +941,12 @@ function LeadFormFields({
           value={form.address}
         />
       </label>
-      <label className="block text-sm">
-        <span className="font-medium text-slate-700">ステータス</span>
-        <select
-          className="mt-1 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900"
-          onChange={(event) => update("status", event.currentTarget.value)}
-          value={form.status}
-        >
-          {LEAD_STATUS_OPTIONS.map((status) => (
-            <option key={status} value={status}>
-              {leadStatusLabelJa(status)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="block text-sm">
-        <span className="font-medium text-slate-700">優先度</span>
-        <select
-          className="mt-1 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900"
-          onChange={(event) => update("priority", event.currentTarget.value)}
-          value={form.priority}
-        >
-          {LEAD_PRIORITY_OPTIONS.map((priority) => (
-            <option key={priority} value={priority}>
-              {priorityLabelJa(priority)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="block text-sm md:col-span-2">
-        <span className="font-medium text-slate-700">メモ</span>
-        <textarea
-          className="mt-1 min-h-20 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-          onChange={(event) => update("notes", event.currentTarget.value)}
-          value={form.notes}
-        />
-      </label>
+      <Field
+        label="メール"
+        onChange={(value) => update("email", value)}
+        type="email"
+        value={form.email}
+      />
     </div>
   );
 }

@@ -1,9 +1,17 @@
 import * as cheerio from "cheerio";
+import { prisma } from "@/lib/db/prisma";
+import { SearchGoalStatus } from "@/lib/generated/prisma/client";
 import type { SearchAnalyzeRequest } from "@/lib/search-analysis/schemas";
 import { generateSearchQueryStrategy } from "@/lib/search-analysis/query-generator";
 import {
+  expandJapanMemorySourcingQueries,
+  shouldUseJapanMemorySourcingPlaybook,
+} from "@/lib/search-analysis/playbooks/japan-memory-sourcing";
+import { scoreSupplierEvidence } from "@/lib/search-analysis/supplier-evidence";
+import {
   applyDatabaseStatuses,
   getKnownCompanyDomainKeys,
+  saveSearchRunToDatabase,
 } from "@/lib/search-analysis/store";
 import { searchSearxng, type SearxngResult } from "@/lib/search-analysis/search";
 import type {
@@ -106,6 +114,69 @@ const CONTACT_PAGE_VERIFY_LIMIT = 8;
 const HOMEPAGE_ENRICH_CONCURRENCY = 6;
 const STRICT_SEARCH_ATTEMPTS = 3;
 
+export async function runStrictPublicCompanySearchGoal(
+  request: SearchAnalyzeRequest,
+): Promise<SearchAnalyzeResponse> {
+  const response = await runStrictPublicCompanySearch(request);
+  const status =
+    response.results.length >= request.resultLimit
+      ? SearchGoalStatus.COMPLETED
+      : response.results.length > 0
+        ? SearchGoalStatus.PARTIAL
+        : SearchGoalStatus.FAILED;
+
+  try {
+    const searchGoal = await prisma.searchGoal.create({
+      data: {
+        opportunityDescription: request.opportunityDescription,
+        referenceKeyword: request.referenceKeyword,
+        industry: request.industry,
+        location: request.location,
+        excludeKeywords: request.excludeKeywords,
+        generatedAngles: response.meta.searchPlan.searchTerms,
+        generatedQueries: response.meta.searchQueries,
+        targetCompanyCount: request.resultLimit,
+        foundCompanyCount: response.results.length,
+        attemptCount: response.meta.attemptCount ?? STRICT_SEARCH_ATTEMPTS,
+        status,
+        diagnostics: {
+          diagnostics: response.meta.diagnostics,
+          candidateNames: response.meta.candidateNames,
+          officialLookupQueries: response.meta.officialLookupQueries,
+        },
+      },
+    });
+
+    await saveSearchRunToDatabase({
+      request,
+      run: response,
+      searchGoalId: searchGoal.id,
+      queryUsed: response.meta.searchQueries.join("\n"),
+    });
+
+    return {
+      ...response,
+      meta: {
+        ...response.meta,
+        searchGoal: {
+          id: searchGoal.id,
+          status: searchGoal.status,
+          referenceKeyword:
+            searchGoal.referenceKeyword ?? searchGoal.opportunityDescription,
+          generatedAngles: searchGoal.generatedAngles,
+          generatedQueries: searchGoal.generatedQueries,
+          targetCompanyCount: searchGoal.targetCompanyCount,
+          foundCompanyCount: searchGoal.foundCompanyCount,
+          attemptCount: searchGoal.attemptCount,
+          maxAttempts: STRICT_SEARCH_ATTEMPTS,
+        },
+      },
+    };
+  } catch {
+    return response;
+  }
+}
+
 export async function runStrictPublicCompanySearch(
   request: SearchAnalyzeRequest,
 ): Promise<SearchAnalyzeResponse> {
@@ -128,18 +199,25 @@ export async function runStrictPublicCompanySearch(
   let removedByEvidenceTotal = 0;
   let skippedKnownDomainsTotal = 0;
   let sawSearchFailure = false;
+  let attemptsCompleted = 0;
 
   for (let attempt = 1; attempt <= STRICT_SEARCH_ATTEMPTS; attempt += 1) {
     if (resultByCompanyKey.size >= request.resultLimit) {
       break;
     }
 
+    attemptsCompleted = attempt;
+
     const attemptQueries = selectAttemptQueries(
       searchQueries,
       attempt,
       STRICT_SEARCH_ATTEMPTS,
     );
-    const settled = await searchQueriesInBatches(attemptQueries, STRICT_SEARCH_BATCH_SIZE);
+    const settled = await searchQueriesInBatches(
+      attemptQueries,
+      STRICT_SEARCH_BATCH_SIZE,
+      strictSearchPageCount(request.resultLimit),
+    );
     const failed = settled.filter((result) => result.status === "rejected");
     const attemptResults = settled.flatMap((result) =>
       result.status === "fulfilled" ? result.value : [],
@@ -151,7 +229,7 @@ export async function runStrictPublicCompanySearch(
 
     const verified = verifyHomepageCandidates(attemptResults, request).slice(
       0,
-      request.resultLimit,
+      verifiedCandidateLimit(request.resultLimit),
     );
     officialCandidatesTotal += verified.length;
     const enrichment = await enrichHomepageCandidates(verified, request);
@@ -230,6 +308,8 @@ export async function runStrictPublicCompanySearch(
       crawledPages: crawledPagesTotal,
       resultLimit: request.resultLimit,
       usedFallbackAnalysis: false,
+      attemptCount: attemptsCompleted,
+      maxAttempts: STRICT_SEARCH_ATTEMPTS,
     },
   };
 }
@@ -241,7 +321,21 @@ function buildHybridSearchQueries(
   return uniqueStrings([
     ...ollamaQueries,
     ...buildStrictSearchQueries(request),
-  ]).slice(0, Math.max(request.resultLimit * 2, 24));
+  ]).slice(0, strictQueryLimit(request.resultLimit));
+}
+
+function strictQueryLimit(resultLimit: number) {
+  return Math.min(120, Math.max(resultLimit * 3, 30));
+}
+
+function strictSearchPageCount(resultLimit: number) {
+  if (resultLimit <= 20) return 1;
+  if (resultLimit <= 60) return 2;
+  return 3;
+}
+
+function verifiedCandidateLimit(resultLimit: number) {
+  return Math.min(220, Math.max(resultLimit * 3, 45));
 }
 
 function mergeSearchPlans(
@@ -299,15 +393,37 @@ function selectAttemptQueries(
 
 function prioritizeStrictResults(results: OpportunityResult[]) {
   const order = {
-    saved: 0,
+    new: 0,
     seen: 1,
-    new: 2,
+    saved: 2,
+  } as const;
+  const contactOrder = {
+    High: 0,
+    Medium: 1,
+    Low: 2,
   } as const;
 
   return [...results].sort(
-    (left, right) =>
-      order[left.databaseStatus?.state ?? "new"] -
-      order[right.databaseStatus?.state ?? "new"],
+    (left, right) => {
+      const leftFit = left.evidence?.supplierFitScore ?? 0;
+      const rightFit = right.evidence?.supplierFitScore ?? 0;
+
+      if (leftFit !== rightFit) {
+        return rightFit - leftFit;
+      }
+
+      const leftContact = contactOrder[left.outreachChannelConfidence ?? "Low"];
+      const rightContact = contactOrder[right.outreachChannelConfidence ?? "Low"];
+
+      if (leftContact !== rightContact) {
+        return leftContact - rightContact;
+      }
+
+      return (
+        order[left.databaseStatus?.state ?? "new"] -
+        order[right.databaseStatus?.state ?? "new"]
+      );
+    },
   );
 }
 
@@ -519,15 +635,21 @@ export function extractHomepageVerification(
   };
 }
 
-async function searchQueriesInBatches(queries: string[], batchSize: number) {
+async function searchQueriesInBatches(
+  queries: string[],
+  batchSize: number,
+  pageCount: number,
+) {
   const settled: PromiseSettledResult<SearxngResult[]>[] = [];
 
-  for (let index = 0; index < queries.length; index += batchSize) {
-    const batch = queries.slice(index, index + batchSize);
-    const batchSettled = await Promise.allSettled(
-      batch.map((query) => searchSearxng(query)),
-    );
-    settled.push(...batchSettled);
+  for (let page = 1; page <= pageCount; page += 1) {
+    for (let index = 0; index < queries.length; index += batchSize) {
+      const batch = queries.slice(index, index + batchSize);
+      const batchSettled = await Promise.allSettled(
+        batch.map((query) => searchSearxng(query, page)),
+      );
+      settled.push(...batchSettled);
+    }
   }
 
   return settled;
@@ -582,6 +704,13 @@ function verifyHomepageCandidate(
     return null;
   }
 
+  const sourcing = shouldUseJapanMemorySourcingPlaybook(request);
+  const supplierEvidence = scoreSupplierEvidence(text);
+
+  if (sourcing && !supplierEvidence.looksLikeSupplier) {
+    return null;
+  }
+
   const companyName = extractCompanyName(result, hostname);
   if (!companyName || isGenericName(companyName)) {
     return null;
@@ -591,6 +720,7 @@ function verifyHomepageCandidate(
   const evidence = buildEvidence({
     hostname,
     request,
+    supplierEvidenceText: text,
     text,
     urlType,
   });
@@ -606,6 +736,7 @@ function verifyHomepageCandidate(
 }
 
 function buildStrictSearchPlan(request: SearchAnalyzeRequest): OpportunitySearchPlan {
+  const sourcing = shouldUseJapanMemorySourcingPlaybook(request);
   const terms = [
     request.referenceKeyword,
     request.industry,
@@ -613,18 +744,58 @@ function buildStrictSearchPlan(request: SearchAnalyzeRequest): OpportunitySearch
   ].filter(Boolean);
 
   return {
-    intentSummary: request.referenceKeyword,
-    targetCompanyProfile: terms.join(" "),
+    intentSummary: sourcing
+      ? `${request.referenceKeyword}（日本のITAD・PCリユース・中古パーツ供給者探索）`
+      : request.referenceKeyword,
+    targetCompanyProfile: sourcing
+      ? "日本のITAD・PCリユース・中古PCパーツ供給企業"
+      : terms.join(" "),
     searchIntent: {
-      companyIdentity: [request.referenceKeyword],
+      companyIdentity: sourcing
+        ? ["ITAD", "PCリユース", "中古パーツ", "中古メモリ", request.referenceKeyword]
+        : [request.referenceKeyword],
       operatingLocation: request.location ? [request.location] : [],
       industry: request.industry ? [request.industry] : [],
-      requiredEvidence: ["official homepage", "company profile", "about page"],
-      exclude: request.excludeKeywords,
+      requiredEvidence: sourcing
+        ? ["法人買取", "データ消去", "リユース", "中古パーツ", "部品販売"]
+        : ["official homepage", "company profile", "about page"],
+      exclude: sourcing
+        ? [
+            ...request.excludeKeywords,
+            "求人",
+            "採用",
+            "ニュース",
+            "記事",
+            "ランキング",
+            "比較サイト",
+            "家電量販",
+            "ヤマダ",
+            "ヨドバシ",
+            "Amazon",
+            "楽天",
+          ]
+        : request.excludeKeywords,
     },
-    searchTerms: terms,
-    excludeTerms: request.excludeKeywords,
-    signals: ["official homepage", "company profile", "about page"],
+    searchTerms: sourcing
+      ? ["ITAD", "PCリユース", "法人PC買取", "データ消去", "中古パーツ", "中古メモリ"]
+      : terms,
+    excludeTerms: sourcing
+      ? [
+          ...request.excludeKeywords,
+          "求人",
+          "採用",
+          "ニュース",
+          "記事",
+          "ランキング",
+          "比較サイト",
+          "家電量販",
+          "Amazon",
+          "楽天",
+        ]
+      : request.excludeKeywords,
+    signals: sourcing
+      ? ["ITAD", "PCリユース", "法人買取", "中古パーツ", "データ消去"]
+      : ["official homepage", "company profile", "about page"],
   };
 }
 
@@ -678,16 +849,33 @@ function buildDeterministicExpansionQueries(
     /vietnam|viet nam|ベトナム/i.test(text) &&
     /it|software|system|システム|ソフトウェア|オフショア/i.test(text);
 
-  if (!targetsVietnamIt) {
-    return [];
+  if (targetsVietnamIt) {
+    return [
+      `vietnam software development company japan official website ${excludeQuery}`,
+      `vietnam offshore development company japan official website ${excludeQuery}`,
+      `ベトナム オフショア開発 会社概要 日本 ${excludeQuery} -求人 -ニュース -一覧`,
+      `ベトナム IT企業 会社概要 日本 ${excludeQuery} -求人 -ニュース -一覧`,
+    ].map((query) => query.replace(/\s+/g, " ").trim());
   }
 
-  return [
-    `vietnam software development company japan official website ${excludeQuery}`,
-    `vietnam offshore development company japan official website ${excludeQuery}`,
-    `ベトナム オフショア開発 会社概要 日本 ${excludeQuery} -求人 -ニュース -一覧`,
-    `ベトナム IT企業 会社概要 日本 ${excludeQuery} -求人 -ニュース -一覧`,
-  ].map((query) => query.replace(/\s+/g, " ").trim());
+  if (
+    shouldUseJapanMemorySourcingPlaybook({
+      referenceKeyword: request.referenceKeyword,
+      opportunityDescription: request.opportunityDescription,
+      location: request.location,
+      searchRole: request.searchRole,
+    })
+  ) {
+    return expandJapanMemorySourcingQueries({
+      location: request.location || "日本",
+      industry: request.industry,
+      limit: 10,
+    }).map((query) =>
+      `${query} ${excludeQuery}`.replace(/\s+/g, " ").trim(),
+    );
+  }
+
+  return [];
 }
 
 async function mapWithConcurrency<Input, Output>(
@@ -719,13 +907,23 @@ function toOpportunityResult(
   request: SearchAnalyzeRequest,
   index: number,
 ): OpportunityResult {
+  const sourcing = shouldUseJapanMemorySourcingPlaybook(request);
   const salesBrief: SalesCompanyBrief = {
     businessSummary: candidate.overview,
     locationEvidence: request.location || "Public homepage candidate",
     industryEvidence: request.industry || "Public homepage candidate",
-    likelyNeed: `${request.industry || "Business"} workflow fit should be reviewed after saving.`,
-    salesAngle: `Review ${candidate.companyName} as a saved lead from public web search.`,
-    contactNextStep: "Open the homepage and confirm the contact page before outreach.",
+    identityEvidence: candidate.evidence.matchedSupplierSignals?.length
+      ? `供給シグナル: ${candidate.evidence.matchedSupplierSignals.join(", ")}`
+      : undefined,
+    likelyNeed: sourcing
+      ? "中古メモリ・PCパーツの在庫や法人PC買取品からの供給可否を確認する価値があります。"
+      : `${request.industry || "Business"} workflow fit should be reviewed after saving.`,
+    salesAngle: sourcing
+      ? `${candidate.companyName}に、中古メモリ・PCパーツの在庫、リースアップ品、サーバ部品の取扱い有無を確認します。`
+      : `Review ${candidate.companyName} as a saved lead from public web search.`,
+    contactNextStep: sourcing
+      ? "問い合わせ窓口から、DDR系メモリや中古PC/サーバ部品の在庫確認メールを送れるか確認します。"
+      : "Open the homepage and confirm the contact page before outreach.",
     confidence: "Medium",
   };
 
@@ -747,7 +945,14 @@ function toOpportunityResult(
     employees: "Unknown",
     industry: request.industry || "Unknown",
     aiOpportunity: salesBrief.salesAngle,
-    whyThisMatches: candidate.evidence.passed,
+    whyThisMatches: sourcing
+      ? [
+          ...candidate.evidence.passed,
+          ...(candidate.evidence.matchedSupplierSignals?.length
+            ? [`Supplier signals: ${candidate.evidence.matchedSupplierSignals.join(", ")}`]
+            : []),
+        ]
+      : candidate.evidence.passed,
     evidence: candidate.evidence,
   };
 }
@@ -755,11 +960,13 @@ function toOpportunityResult(
 function buildEvidence({
   hostname,
   request,
+  supplierEvidenceText,
   text,
   urlType,
 }: {
   hostname: string;
   request: SearchAnalyzeRequest;
+  supplierEvidenceText: string;
   text: string;
   urlType: ResultEvidence["urlType"];
 }): ResultEvidence {
@@ -780,19 +987,31 @@ function buildEvidence({
     "サービス",
     "công ty",
   ]);
+  const sourcing = shouldUseJapanMemorySourcingPlaybook(request);
+  const supplierEvidence = sourcing
+    ? scoreSupplierEvidence(supplierEvidenceText)
+    : undefined;
 
   return {
     passed: [
       "Verified company homepage candidate",
       `Homepage domain: ${hostname}`,
       urlType === "homepage" ? "Root homepage URL" : "Company profile/about page found",
+      ...(supplierEvidence?.matchedSellSide.length
+        ? [`Supplier fit: ${supplierEvidence.matchedSellSide.join(", ")}`]
+        : []),
     ],
-    missing: [],
+    missing: supplierEvidence && !supplierEvidence.looksLikeSupplier
+      ? ["ITAD / PC reuse / used parts supplier signal"]
+      : [],
     urlType,
     matchedIdentity: [],
     matchedLocation,
     matchedIndustry,
     matchedOfficial,
+    supplierFitScore: supplierEvidence?.score,
+    matchedSupplierSignals: supplierEvidence?.matchedSellSide,
+    matchedNoiseSignals: supplierEvidence?.matchedNoise,
   };
 }
 
@@ -1172,6 +1391,13 @@ function hostnameToName(hostname: string) {
 }
 
 function hasCompanySignals(text: string, request: SearchAnalyzeRequest) {
+  if (shouldUseJapanMemorySourcingPlaybook(request)) {
+    const supplierEvidence = scoreSupplierEvidence(text);
+    if (supplierEvidence.looksLikeSupplier) {
+      return true;
+    }
+  }
+
   const corporateSignal =
     /company|corporation|corp\.?|co\.?\s*ltd\.?|ltd\.?|inc\.?|jsc|joint stock|株式会社|有限会社|合同会社|会社概要|企業情報|事業内容|お問い合わせ|công ty|trách nhiệm hữu hạn|cổ phần/i.test(text);
   const serviceSignal =

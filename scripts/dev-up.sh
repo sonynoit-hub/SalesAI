@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 WITH_QUEUE=0
 SKIP_MIGRATE=0
+SKIP_SEED=0
 FOREGROUND_APP=1
 
 usage() {
@@ -15,11 +16,14 @@ Usage: scripts/dev-up.sh [options]
 Starts the local SalesAI stack:
   - Docker services (Postgres, SearXNG, Crawl4AI)
   - Ollama
+  - Prisma migrations
+  - Database seed
   - Next.js dev server
 
 Options:
   --with-queue    Also poll the auto-send queue every 60s
-  --skip-migrate  Skip prisma generate/migrate
+  --skip-migrate  Skip database migrations
+  --skip-seed     Skip database seed
   --containers    Only start containers + Ollama (no Next.js)
   -h, --help      Show this help
 EOF
@@ -29,6 +33,7 @@ for arg in "$@"; do
   case "$arg" in
     --with-queue) WITH_QUEUE=1 ;;
     --skip-migrate) SKIP_MIGRATE=1 ;;
+    --skip-seed) SKIP_SEED=1 ;;
     --containers) FOREGROUND_APP=0 ;;
     -h|--help)
       usage
@@ -247,13 +252,13 @@ if [[ ! -d node_modules ]]; then
 fi
 
 if [[ "$SKIP_MIGRATE" -eq 0 ]]; then
-  log "Preparing database schema..."
-  npm run db:generate
-  # Non-interactive migrate for local boots; falls back to push if needed.
-  if ! npx prisma migrate deploy >/dev/null 2>&1; then
-    warn "prisma migrate deploy failed; trying prisma db push..."
-    npm run db:push
-  fi
+  log "Applying database migrations..."
+  npm run db:migrate
+fi
+
+if [[ "$SKIP_SEED" -eq 0 ]]; then
+  log "Seeding database..."
+  npm run db:seed
 fi
 
 if [[ "$WITH_QUEUE" -eq 1 ]]; then

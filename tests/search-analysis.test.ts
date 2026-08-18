@@ -24,6 +24,7 @@ const vietnamItTokyoRequest: SearchAnalyzeRequest = {
   opportunityDescription: "ベトナム企業 IT 東京",
   industry: "IT",
   location: "東京",
+  searchRole: "auto",
   excludeKeywords: ["求人", "採用", "ニュース"],
   targetCompanyCount: 5,
   resultLimit: 5,

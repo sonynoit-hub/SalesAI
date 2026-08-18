@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { searchAnalyzeRequestSchema } from "@/lib/search-analysis/schemas";
-import { runStrictPublicCompanySearch } from "@/lib/search-analysis/strict-public-search";
+import { runStrictPublicCompanySearchGoal } from "@/lib/search-analysis/strict-public-search";
 
 export const runtime = "nodejs";
 
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const response = await runStrictPublicCompanySearch(parsed.data);
+    const response = await runStrictPublicCompanySearchGoal(parsed.data);
 
     return NextResponse.json({ data: response });
   } catch (error) {

@@ -4,6 +4,11 @@ import type {
   SearchIntent,
 } from "@/lib/search-analysis/types";
 import { formatIndustryJa } from "@/lib/industries";
+import {
+  japanMemorySourcingAngles,
+  japanMemorySourcingExcludeTerms,
+  shouldUseJapanMemorySourcingPlaybook,
+} from "@/lib/search-analysis/playbooks/japan-memory-sourcing";
 
 type OllamaChatResponse = {
   message?: {
@@ -100,12 +105,14 @@ export function buildFallbackSearchPlan(request: SearchAnalyzeRequest) {
   const mappedTerms = targetsJapan
     ? mapJapaneseOpportunityTerms(request.opportunityDescription)
     : inputTerms;
+  const sourcing = shouldUseJapanMemorySourcingPlaybook(request);
   const searchTerms = Array.from(
     new Set([
       ...searchIntent.companyIdentity,
       ...searchIntent.operatingLocation,
       ...searchIntent.industry,
       ...searchIntent.requiredEvidence,
+      ...(sourcing ? japanMemorySourcingAngles() : []),
       ...mappedTerms,
       ...inputTerms,
     ]),
@@ -114,15 +121,42 @@ export function buildFallbackSearchPlan(request: SearchAnalyzeRequest) {
     .slice(0, 12);
 
   return strengthenPlanForDirectSearch(request, normalizePlan({
-    intentSummary: targetsJapan
-      ? `${request.opportunityDescription}に関連する営業機会`
-      : `Sales opportunity related to ${request.opportunityDescription}`,
-    targetCompanyProfile: targetsJapan
-      ? `${localizeLocation(request.location)}の${localizeIndustry(request.industry)}企業`
-      : `${request.industry} companies in ${request.location}`,
-    searchIntent,
+    intentSummary: sourcing
+      ? `${request.opportunityDescription}の使用済メモリ供給者を探す`
+      : targetsJapan
+        ? `${request.opportunityDescription}に関連する営業機会`
+        : `Sales opportunity related to ${request.opportunityDescription}`,
+    targetCompanyProfile: sourcing
+      ? "日本の中古メモリ／PCパーツ供給者・法人買取・IT資産リユース企業"
+      : targetsJapan
+        ? `${localizeLocation(request.location)}の${localizeIndustry(request.industry)}企業`
+        : `${request.industry} companies in ${request.location}`,
+    searchIntent: sourcing
+      ? {
+          ...searchIntent,
+          companyIdentity: uniqueTerms([
+            "中古メモリ",
+            "PCパーツ",
+            "IT資産リユース",
+            ...searchIntent.companyIdentity,
+          ]).slice(0, 8),
+          requiredEvidence: uniqueTerms([
+            "パーツ販売",
+            "メモリ",
+            "法人買取",
+            "公式サイト",
+            ...searchIntent.requiredEvidence,
+          ]).slice(0, 8),
+          exclude: uniqueTerms([
+            ...japanMemorySourcingExcludeTerms(),
+            ...searchIntent.exclude,
+          ]).slice(0, 12),
+        }
+      : searchIntent,
     searchTerms,
-    excludeTerms: searchIntent.exclude,
+    excludeTerms: sourcing
+      ? japanMemorySourcingExcludeTerms(searchIntent.exclude)
+      : searchIntent.exclude,
     signals: searchTerms.slice(0, 5),
   }));
 }

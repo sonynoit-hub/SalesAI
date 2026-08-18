@@ -77,6 +77,9 @@ export type ResultEvidence = {
   matchedLocation: string[];
   matchedIndustry: string[];
   matchedOfficial: string[];
+  supplierFitScore?: number;
+  matchedSupplierSignals?: string[];
+  matchedNoiseSignals?: string[];
 };
 
 export type SearchAnalyzeResponse = {
@@ -93,6 +96,8 @@ export type SearchAnalyzeResponse = {
     crawledPages: number;
     resultLimit: number;
     usedFallbackAnalysis: boolean;
+    attemptCount?: number;
+    maxAttempts?: number;
     searchGoal?: {
       id: string;
       status: "RUNNING" | "COMPLETED" | "PARTIAL" | "FAILED";

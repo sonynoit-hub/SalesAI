@@ -1,6 +1,12 @@
 import { z } from "zod";
 import type { SearchAnalyzeRequest } from "@/lib/search-analysis/schemas";
 import type { OpportunitySearchPlan } from "@/lib/search-analysis/types";
+import {
+  expandJapanMemorySourcingQueries,
+  japanMemorySourcingAngles,
+  japanMemorySourcingExcludeTerms,
+  shouldUseJapanMemorySourcingPlaybook,
+} from "@/lib/search-analysis/playbooks/japan-memory-sourcing";
 
 type OllamaChatResponse = {
   message?: {
@@ -41,6 +47,7 @@ async function generateWithOllama(request: SearchAnalyzeRequest) {
   const baseUrl = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
   const model = process.env.OLLAMA_MODEL ?? "qwen2.5:7b";
   const url = new URL("/api/chat", baseUrl);
+  const sourcing = shouldUseJapanMemorySourcingPlaybook(request);
   const prompt = [
     "You are a B2B lead-search strategist.",
     "The user gives a reference keyword and a target number of company candidates.",
@@ -48,9 +55,17 @@ async function generateWithOllama(request: SearchAnalyzeRequest) {
     "Prospects must be company websites, company profile pages, or official corporate pages.",
     "Avoid directories, job boards, news articles, reports, marketplaces, and vendor articles.",
     "If the target is Japan or the keyword is Japanese, include Japanese queries and Japanese exclude keywords.",
+    sourcing
+      ? [
+          "The user is BUYING used memory (e.g. DDR4). Do NOT rely on the SKU word alone.",
+          "Expand into Japanese supplier-channel queries: 中古メモリ販売, PCパーツ卸, 法人PC買取, リースアップ買取, サーバ部品, IT資産リユース.",
+          "Prefer companies that sell or strip parts over consumer retail brands.",
+        ].join(" ")
+      : "",
     "Return only valid JSON. Do not include markdown.",
     "",
     `Reference keyword: ${request.referenceKeyword}`,
+    `Search role: ${request.searchRole}`,
     `Target company candidates: ${request.targetCompanyCount}`,
     `Industry filter: ${request.industry || "optional"}`,
     `Location filter: ${request.location || "optional"}`,
@@ -63,7 +78,9 @@ async function generateWithOllama(request: SearchAnalyzeRequest) {
       searchQueries: ["exact query"],
       excludeTerms: ["term"],
     }),
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const response = await fetch(url, {
     method: "POST",
@@ -96,6 +113,28 @@ function buildFallbackStrategy(request: SearchAnalyzeRequest) {
   const location = request.location;
   const context = [reference, industry, location].filter(Boolean).join(" ");
   const targetsJapan = /japan|日本|東京|大阪|製造|会社|企業/i.test(context);
+  const sourcing = shouldUseJapanMemorySourcingPlaybook(request);
+
+  if (sourcing) {
+    const excludeTerms = japanMemorySourcingExcludeTerms(request.excludeKeywords);
+    const angles = japanMemorySourcingAngles();
+    const queries = expandJapanMemorySourcingQueries({
+      location: location || "日本",
+      industry,
+      limit: 16,
+    }).map((query) =>
+      [query, ...excludeTerms.map((term) => `-${term}`)].join(" ").trim(),
+    );
+
+    return {
+      targetCompanyProfile:
+        "日本の中古メモリ／PCパーツ供給者・法人買取・IT資産リユース企業",
+      searchAngles: angles,
+      searchQueries: queries,
+      excludeTerms,
+    };
+  }
+
   const profile = [industry || "target", "companies", location].filter(Boolean).join(" ");
   const excludeTerms = uniqueTerms([
     ...request.excludeKeywords,
@@ -150,17 +189,35 @@ function normalizeStrategy(
   request: SearchAnalyzeRequest,
   strategy: z.infer<typeof queryStrategySchema>,
 ): SearchQueryStrategy {
+  const sourcing = shouldUseJapanMemorySourcingPlaybook(request);
   const excludeTerms = uniqueTerms([
     ...strategy.excludeTerms,
     ...request.excludeKeywords,
-  ]).slice(0, 12);
-  const searchQueries = uniqueTerms(strategy.searchQueries)
+    ...(sourcing ? japanMemorySourcingExcludeTerms() : []),
+  ]).slice(0, 16);
+
+  const playbookQueries = sourcing
+    ? expandJapanMemorySourcingQueries({
+        location: request.location || "日本",
+        industry: request.industry,
+        limit: 12,
+      })
+    : [];
+
+  const searchQueries = uniqueTerms([...playbookQueries, ...strategy.searchQueries])
     .map((query) => appendExclusions(query, excludeTerms))
-    .slice(0, 20);
-  const searchAngles = uniqueTerms(strategy.searchAngles).slice(0, 15);
-  const targetCompanyProfile =
-    strategy.targetCompanyProfile ||
-    [request.industry || "Target", "companies", request.location].filter(Boolean).join(" ");
+    .slice(0, 24);
+  const searchAngles = uniqueTerms([
+    ...(sourcing ? japanMemorySourcingAngles() : []),
+    ...strategy.searchAngles,
+  ]).slice(0, 18);
+  const targetCompanyProfile = sourcing
+    ? strategy.targetCompanyProfile ||
+      "日本の中古メモリ／PCパーツ供給者・法人買取・IT資産リユース企業"
+    : strategy.targetCompanyProfile ||
+      [request.industry || "Target", "companies", request.location]
+        .filter(Boolean)
+        .join(" ");
 
   return {
     targetCompanyProfile,
@@ -168,13 +225,19 @@ function normalizeStrategy(
     searchQueries,
     excludeTerms,
     searchPlan: {
-      intentSummary: request.referenceKeyword,
+      intentSummary: sourcing
+        ? `${request.referenceKeyword}（日本の使用済メモリ供給者探索）`
+        : request.referenceKeyword,
       targetCompanyProfile,
       searchIntent: {
-        companyIdentity: [request.referenceKeyword],
-        operatingLocation: request.location ? [request.location] : [],
+        companyIdentity: sourcing
+          ? ["中古メモリ", "PCパーツ", "IT資産リユース"]
+          : [request.referenceKeyword],
+        operatingLocation: request.location ? [request.location] : ["日本"],
         industry: request.industry ? [request.industry] : [],
-        requiredEvidence: ["official website", "company profile", "about page"],
+        requiredEvidence: sourcing
+          ? ["パーツ販売", "メモリ", "法人買取", "公式サイト"]
+          : ["official website", "company profile", "about page"],
         exclude: excludeTerms,
       },
       searchTerms: searchAngles.slice(0, 12),
