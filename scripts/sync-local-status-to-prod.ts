@@ -8,7 +8,10 @@
 import { prisma } from "../lib/db/prisma";
 import { normalizeCompanyWebsiteUrl } from "../lib/company-identity";
 import { deriveLeadContactActivity } from "../lib/leads/contact-activity";
-import { resolveQualifyMark } from "../lib/leads/status";
+import {
+  resolveLeadProgressStatus,
+  resolveQualifyMark,
+} from "../lib/leads/status";
 
 const BASE =
   process.env.SYNC_PROD_BASE_URL?.replace(/\/$/, "") ||
@@ -103,6 +106,23 @@ function contactStatusFromActivity(activity: {
   return "not_contacted";
 }
 
+function contactStatusFromLead(
+  status: string,
+  activity: {
+    hasEmailContact: boolean;
+    hasPhoneContact: boolean;
+    hasEmailReply: boolean;
+  },
+): ContactStatus {
+  const progress = resolveLeadProgressStatus(status, activity);
+  if (progress === "REPLIED") return "reply";
+  if (progress === "CONTACTED") {
+    if (activity.hasPhoneContact && !activity.hasEmailContact) return "phone";
+    return "email";
+  }
+  return contactStatusFromActivity(activity);
+}
+
 function qualifyStatusFor(kind: QualifyKind): LocalRow["qualifyStatus"] {
   if (kind === "unconfirmed") return "NEW";
   if (kind === "passed") return "RESEARCHED";
@@ -149,7 +169,7 @@ async function loadLocalRows(): Promise<LocalRow[]> {
       domain: domainOf(lead.company.websiteUrl, lead.company.normalizedDomain),
       qualify,
       qualifyStatus: qualifyStatusFor(qualify),
-      contact: contactStatusFromActivity(activity),
+      contact: contactStatusFromLead(lead.status, activity),
     };
   });
 }
@@ -192,7 +212,7 @@ function parseProdRows(html: string): ProdRow[] {
         priority: stringValue(row.priority),
         notes: stringValue(row.notes),
         qualify: qualifyFromStatus(status),
-        contact: contactStatusFromActivity({
+        contact: contactStatusFromLead(status, {
           hasEmailContact: activity.hasEmailContact === true,
           hasPhoneContact: activity.hasPhoneContact === true,
           hasEmailReply: activity.hasEmailReply === true,
