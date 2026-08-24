@@ -8,6 +8,7 @@
 import { prisma } from "../lib/db/prisma";
 import { normalizeCompanyWebsiteUrl } from "../lib/company-identity";
 import { deriveLeadContactActivity } from "../lib/leads/contact-activity";
+import { getLatestContactEventsByLeadIds } from "../lib/leads/contact-events";
 import {
   resolveLeadProgressStatus,
   resolveQualifyMark,
@@ -28,6 +29,17 @@ const PROGRESS_FILTERS: ContactStatus[] = [
   "phone",
   "reply",
 ];
+const ACTIVE_LEAD_STATUSES = new Set([
+  "NEW",
+  "RESEARCHED",
+  "QUALIFIED",
+  "CONTACTED",
+  "REPLIED",
+  "FOLLOW_UP",
+  "MEETING",
+  "WON",
+  "LOST",
+]);
 
 type LocalRow = {
   companyName: string;
@@ -118,7 +130,7 @@ function contactStatusFromLead(
   if (progress === "REPLIED") return "reply";
   if (progress === "CONTACTED") {
     if (activity.hasPhoneContact && !activity.hasEmailContact) return "phone";
-    return "email";
+    if (activity.hasEmailContact) return "email";
   }
   return contactStatusFromActivity(activity);
 }
@@ -149,6 +161,7 @@ function unescapeRsc(html: string) {
 async function loadLocalRows(): Promise<LocalRow[]> {
   const leads = await prisma.lead.findMany({
     select: {
+      id: true,
       status: true,
       tags: true,
       company: {
@@ -160,18 +173,26 @@ async function loadLocalRows(): Promise<LocalRow[]> {
       },
     },
   });
+  const contactEventsByLeadId = await getLatestContactEventsByLeadIds(
+    leads.map((lead) => lead.id),
+  );
 
-  return leads.map((lead) => {
-    const activity = deriveLeadContactActivity({ tags: lead.tags });
-    const qualify = resolveQualifyMark(lead.status);
-    return {
-      companyName: lead.company.name,
-      domain: domainOf(lead.company.websiteUrl, lead.company.normalizedDomain),
-      qualify,
-      qualifyStatus: qualifyStatusFor(qualify),
-      contact: contactStatusFromLead(lead.status, activity),
-    };
-  });
+  return leads
+    .filter((lead) => ACTIVE_LEAD_STATUSES.has(lead.status))
+    .map((lead) => {
+      const activity = deriveLeadContactActivity({
+        tags: lead.tags,
+        events: contactEventsByLeadId.get(lead.id),
+      });
+      const qualify = resolveQualifyMark(lead.status);
+      return {
+        companyName: lead.company.name,
+        domain: domainOf(lead.company.websiteUrl, lead.company.normalizedDomain),
+        qualify,
+        qualifyStatus: qualifyStatusFor(qualify),
+        contact: contactStatusFromLead(lead.status, activity),
+      };
+    });
 }
 
 function parseProdRows(html: string): ProdRow[] {
