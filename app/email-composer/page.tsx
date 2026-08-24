@@ -47,9 +47,13 @@ export default async function EmailComposerPage() {
                 />
                 <Link
                   className="mt-2 inline-flex text-sm font-medium text-blue-600 hover:text-blue-800"
-                  href={`/companies/${row.company.id}`}
+                  href={
+                    row.primaryLead
+                      ? `/leads?lead=${row.primaryLead.id}`
+                      : `/leads?company=${row.company.id}`
+                  }
                 >
-                  会社詳細を開く
+                  CRMで会社を開く
                 </Link>
               </SectionCard>
             );
@@ -57,7 +61,7 @@ export default async function EmailComposerPage() {
         ) : (
           <SectionCard title="下書きなし">
             <p className="text-sm text-slate-600">
-              メール下書きはまだありません。会社詳細の「下書きを作成」または「フォローメールを作成」から作成できます。
+              メール下書きはまだありません。リードCRMで会社を選び、必要な情報を確認してください。
             </p>
             <Link
               className="mt-3 inline-flex text-sm font-medium text-blue-600 hover:text-blue-800"

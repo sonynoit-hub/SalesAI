@@ -144,10 +144,11 @@ describe("qualify mark helpers", () => {
     assert.equal(resolveQualifyMark("RESEARCHED"), "passed");
     assert.equal(resolveQualifyMark("CONTACTED"), "qualified");
     assert.equal(resolveQualifyMark("LOST"), "passed");
+    assert.equal(qualifyMarkLabel("qualified"), "有望");
     assert.equal(qualifyMarkLabel("passed"), "見送り");
   });
 
-  it("cycles 未確認 → 見込み → 見送り → 未確認", () => {
+  it("cycles 未確認 → 有望 → 見送り → 未確認", () => {
     assert.equal(nextQualifiedMarkStatus("NEW"), "QUALIFIED");
     assert.equal(nextQualifiedMarkStatus("QUALIFIED"), "RESEARCHED");
     assert.equal(nextQualifiedMarkStatus("RESEARCHED"), "NEW");
@@ -155,7 +156,7 @@ describe("qualify mark helpers", () => {
     assert.equal(nextQualifiedMarkStatus("LOST"), "NEW");
   });
 
-  it("filters by qualify mark including 見送り", () => {
+  it("filters by review mark including 見送り", () => {
     assert.equal(leadMatchesQualifyFilter("NEW", "unconfirmed"), true);
     assert.equal(leadMatchesQualifyFilter("QUALIFIED", "qualified"), true);
     assert.equal(leadMatchesQualifyFilter("RESEARCHED", "passed"), true);

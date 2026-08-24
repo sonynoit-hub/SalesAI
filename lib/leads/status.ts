@@ -77,7 +77,7 @@ export function resolveLeadProgressStatus(
 /**
  * Middle-column mark:
  * - unconfirmed (NEW): not reviewed yet
- * - qualified (QUALIFIED+): 見込み
+ * - qualified (QUALIFIED+): 有望
  * - passed (RESEARCHED / LOST): confirmed but not a fit — keep record, no delete
  */
 export function resolveQualifyMark(status: string): QualifyMarkKind {
@@ -94,12 +94,12 @@ export function resolveQualifyMark(status: string): QualifyMarkKind {
 }
 
 export function qualifyMarkLabel(kind: QualifyMarkKind): string {
-  if (kind === "qualified") return "見込み";
+  if (kind === "qualified") return "有望";
   if (kind === "passed") return "見送り";
   return "未確認";
 }
 
-/** Next status when cycling Confirm: 未確認 → 見込み → 見送り → 未確認. */
+/** Next status when cycling Confirm: 未確認 → 有望 → 見送り → 未確認. */
 export function nextQualifiedMarkStatus(
   status: string,
 ): "NEW" | "QUALIFIED" | "RESEARCHED" {
@@ -161,7 +161,7 @@ export function leadProgressEventLabel(
 const LEAD_STATUS_LABELS_JA: Record<string, string> = {
   NEW: "新規",
   RESEARCHED: "見送り",
-  QUALIFIED: "見込みあり",
+  QUALIFIED: "有望",
   CONTACTED: "連絡済み",
   REPLIED: "返信あり",
   FOLLOW_UP: "フォロー中",

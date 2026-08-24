@@ -115,7 +115,7 @@ export default async function OutreachHistoryPage() {
                   {emails.map((email) => {
                     const companyName =
                       email.lead.company.name || "未命名の会社";
-                    const companyHref = `/companies/${email.lead.company.id}`;
+                    const companyHref = `/leads?lead=${email.lead.id}`;
                     const contactActivity = deriveLeadContactActivity({
                       tags: email.lead.tags,
                       events: eventMap.get(email.leadId) ?? null,

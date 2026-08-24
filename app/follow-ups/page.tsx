@@ -190,9 +190,9 @@ export default async function FollowUpsPage() {
                         ) : null}
                         <Link
                           className="inline-flex h-9 items-center justify-center rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800"
-                          href={`/companies/${task.lead.company.id}`}
+                          href={`/leads?lead=${task.lead.id}`}
                         >
-                          会社詳細を開く
+                          CRMで開く
                         </Link>
                       </div>
                     </div>

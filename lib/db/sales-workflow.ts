@@ -147,7 +147,14 @@ export async function getLeadCrmPageRows({
       skip: (normalizedPage - 1) * normalizedPageSize,
       take: normalizedPageSize,
       include: {
-        company: true,
+        company: {
+          include: {
+            research: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+            },
+          },
+        },
         contact: true,
       },
     }),

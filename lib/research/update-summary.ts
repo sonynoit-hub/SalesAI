@@ -4,7 +4,7 @@ import { LeadStatus } from "@/lib/generated/prisma/client";
 
 export const researchSummarySchema = z.object({
   companyId: z.string().trim().min(1),
-  summary: z.string().trim().min(1).max(8_000),
+  summary: z.string().trim().max(8_000),
 });
 
 export type ResearchSummaryInput = z.infer<typeof researchSummarySchema>;

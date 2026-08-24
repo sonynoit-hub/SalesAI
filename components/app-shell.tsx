@@ -23,14 +23,19 @@ function subscribe(listener: () => void) {
 
 function getCollapsedSnapshot() {
   try {
-    return window.localStorage.getItem(STORAGE_KEY) === "1";
+    const value = window.localStorage.getItem(STORAGE_KEY);
+    // Default collapsed so Lead CRM nav stays out of the way.
+    if (value === null) {
+      return true;
+    }
+    return value === "1";
   } catch {
-    return false;
+    return true;
   }
 }
 
 function getServerCollapsedSnapshot() {
-  return false;
+  return true;
 }
 
 function setCollapsedPreference(next: boolean) {

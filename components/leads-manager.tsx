@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { LeadsExcelImport } from "@/components/leads-excel-import";
@@ -21,18 +20,20 @@ export type LeadManageRow = {
   industry: string;
   location: string;
   address: string;
+  description: string;
+  researchSummary: string;
   contactName: string;
   contactTitle: string;
   email: string;
   phone: string;
   contactFormUrl: string;
-  hasOutreachChannel: boolean;
   status: string;
   progressStatus: string;
   priority: string;
   notes: string;
   contactActivity: LeadContactActivitySummary;
   progressAtLabel: string;
+  lastActivityDateLabel: string;
 };
 
 type LeadFormState = {
@@ -50,6 +51,12 @@ type LeadFormState = {
   notes: string;
 };
 
+type DetailPanelFormState = LeadFormState & {
+  contactFormUrl: string;
+  description: string;
+  researchSummary: string;
+};
+
 const emptyForm: LeadFormState = {
   companyName: "",
   websiteUrl: "",
@@ -64,6 +71,16 @@ const emptyForm: LeadFormState = {
   priority: "MEDIUM",
   notes: "",
 };
+
+const detailPanelStyle = {
+  width: "360px",
+  minWidth: "360px",
+  maxWidth: "360px",
+  flex: "0 0 360px",
+};
+
+const detailPanelClassName =
+  "sticky top-3 z-10 max-h-[calc(100vh-1.5rem)] self-start overflow-y-auto border-l border-slate-300 bg-white p-5";
 
 type ScopedLocalValues<T> = {
   scopeKey: string;
@@ -87,6 +104,15 @@ function rowToForm(row: LeadManageRow): LeadFormState {
   };
 }
 
+function rowToDetailForm(row: LeadManageRow): DetailPanelFormState {
+  return {
+    ...rowToForm(row),
+    contactFormUrl: row.contactFormUrl,
+    description: row.description,
+    researchSummary: row.researchSummary,
+  };
+}
+
 export function LeadsManager({
   rows,
   filters,
@@ -103,6 +129,11 @@ export function LeadsManager({
   const searchParams = useSearchParams();
   const [inputPanel, setInputPanel] = useState<"create" | "import" | null>(null);
   const [createForm, setCreateForm] = useState<LeadFormState>(emptyForm);
+  const [query, setQuery] = useState("");
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [isWorking, setIsWorking] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -121,12 +152,6 @@ export function LeadsManager({
   const [workingStatusLeadId, setWorkingStatusLeadId] = useState<string | null>(
     null,
   );
-  const [isEnriching, setIsEnriching] = useState(false);
-  const [enrichProgress, setEnrichProgress] = useState<{
-    done: number;
-    total: number;
-    found: number;
-  } | null>(null);
 
   const localStatusByLeadId = useMemo(
     () =>
@@ -161,9 +186,45 @@ export function LeadsManager({
     });
   }, [rows, localStatusByLeadId, localContactByLeadId]);
 
-  const missingContactRows = useMemo(() => {
-    return displayRows.filter((row) => !row.hasOutreachChannel);
-  }, [displayRows]);
+  const visibleRows = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return displayRows;
+
+    return displayRows.filter((row) => {
+      const haystack = [
+        row.companyName,
+        row.websiteUrl,
+        getWebsiteLabel(row.websiteUrl),
+        row.email,
+        row.phone,
+        row.location,
+        row.address,
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(normalizedQuery);
+    });
+  }, [displayRows, query]);
+
+  const visibleLeadIds = useMemo(
+    () => visibleRows.map((row) => row.leadId),
+    [visibleRows],
+  );
+  const allVisibleSelected =
+    visibleLeadIds.length > 0 &&
+    visibleLeadIds.every((leadId) => selectedLeadIds.has(leadId));
+  const requestedLeadId = searchParams.get("lead");
+  const requestedCompanyId = searchParams.get("company");
+  const requestedRow = displayRows.find(
+    (row) =>
+      (requestedLeadId && row.leadId === requestedLeadId) ||
+      (requestedCompanyId && row.companyId === requestedCompanyId),
+  );
+  const selectedRow =
+    displayRows.find((row) => row.leadId === selectedLeadId) ??
+    requestedRow ??
+    null;
 
   const pageStart =
     pagination.totalCount === 0
@@ -200,84 +261,63 @@ export function LeadsManager({
     router.push(query ? `${pathname}?${query}` : pathname);
   }
 
-  async function enrichMissingContacts() {
-    if (isWorking || isEnriching) return;
+  function selectLead(row: LeadManageRow) {
+    setSelectedLeadId(row.leadId);
+    const next = new URLSearchParams(searchParams.toString());
+    next.set("lead", row.leadId);
+    next.delete("company");
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+  }
 
-    const targets = missingContactRows.map((row) => row.companyId);
-    if (targets.length === 0) {
-      setSuccessMessage("表示中のリードはすでに連絡先があります。");
-      return;
-    }
-
-    if (
-      !window.confirm(
-        `表示中の未設定 ${targets.length} 社について、公式サイトからメール／お問い合わせフォームを自動検索します。よろしいですか？`,
-      )
-    ) {
-      return;
-    }
-
-    setIsEnriching(true);
-    setErrorMessage(null);
-    setSuccessMessage(null);
-    setEnrichProgress({ done: 0, total: targets.length, found: 0 });
-
-    const chunkSize = 3;
-    let found = 0;
-    let done = 0;
-    const failureMessages: string[] = [];
-
-    try {
-      for (let index = 0; index < targets.length; index += chunkSize) {
-        const chunk = targets.slice(index, index + chunkSize);
-        const response = await fetch("/api/companies/enrich-batch", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            companyIds: chunk,
-            onlyMissing: true,
-            limit: chunk.length,
-          }),
-        });
-        const payload = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            payload?.error?.message ?? "一括の連絡先取得に失敗しました。",
-          );
-        }
-
-        const results = payload?.data?.results ?? [];
-        for (const result of results) {
-          done += 1;
-          if (result.ok && (result.primaryEmail || result.contactFormUrl)) {
-            found += 1;
-          } else if (!result.ok) {
-            failureMessages.push(
-              `${result.companyName || result.companyId}: ${result.message}`,
-            );
-          }
-        }
-
-        setEnrichProgress({ done, total: targets.length, found });
+  function updateFilters(nextFilters: Partial<LeadCrmFilters>) {
+    const next = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(nextFilters)) {
+      if (value === "all") {
+        next.delete(key);
+      } else {
+        next.set(key, value);
       }
-
-      setSuccessMessage(
-        `連絡先検索が完了しました。${targets.length}社中 ${found}社でメールまたはフォームを取得しました。`,
-      );
-      if (failureMessages.length > 0) {
-        setErrorMessage(failureMessages.slice(0, 3).join(" / "));
-      }
-      router.refresh();
-    } catch (error) {
-      setErrorMessage(
-        error instanceof Error
-          ? error.message
-          : "一括の連絡先取得に失敗しました。",
-      );
-    } finally {
-      setIsEnriching(false);
     }
+    next.delete("page");
+    pushSearchParams(next);
+  }
+
+  function applyQuickPreset(value: string) {
+    if (value === "qualified_uncontacted") {
+      updateFilters({ qualify: "qualified", progress: "not_contacted" });
+    } else if (value === "needs_contact") {
+      updateFilters({ qualify: "all", progress: "not_contacted" });
+    } else if (value === "replied") {
+      updateFilters({ qualify: "all", progress: "reply" });
+    }
+  }
+
+  function toggleLeadSelection(leadId: string) {
+    setSelectedLeadIds((current) => {
+      const next = new Set(current);
+      if (next.has(leadId)) {
+        next.delete(leadId);
+      } else {
+        next.add(leadId);
+      }
+      return next;
+    });
+  }
+
+  function toggleVisibleSelection() {
+    setSelectedLeadIds((current) => {
+      const next = new Set(current);
+      if (allVisibleSelected) {
+        for (const leadId of visibleLeadIds) {
+          next.delete(leadId);
+        }
+      } else {
+        for (const leadId of visibleLeadIds) {
+          next.add(leadId);
+        }
+      }
+      return next;
+    });
   }
 
   async function createLead(event: React.FormEvent<HTMLFormElement>) {
@@ -335,12 +375,12 @@ export function LeadsManager({
       const payload = await response.json();
 
       if (!response.ok) {
-        throw new Error(payload?.error?.message ?? "見込みマークを更新できませんでした。");
+        throw new Error(payload?.error?.message ?? "判定を更新できませんでした。");
       }
 
       setSuccessMessage(
         nextStatus === "QUALIFIED"
-          ? `${row.companyName || "リード"} を見込みにしました。`
+          ? `${row.companyName || "リード"} を有望にしました。`
           : nextStatus === "RESEARCHED"
             ? `${row.companyName || "リード"} を見送りにしました（レコードは残します）。`
             : `${row.companyName || "リード"} を未確認に戻しました。`,
@@ -353,12 +393,12 @@ export function LeadsManager({
         },
       }));
       // Do not refresh: keep the row in the current filter view so Confirm
-      // changes (見込み → 見送り / 未確認) stay visible until the filter changes.
+      // changes (有望 → 見送り / 未確認) stay visible until the filter changes.
     } catch (error) {
       setErrorMessage(
         error instanceof Error
           ? error.message
-          : "見込みマークを更新できませんでした。",
+          : "判定を更新できませんでした。",
       );
     } finally {
       setIsWorking(false);
@@ -370,12 +410,8 @@ export function LeadsManager({
     nextStatus: ContactStatusValue,
   ) {
     if (isWorking || workingStatusLeadId) return;
-    if (nextStatus === "contacted") return;
 
-    const currentStatus = resolveContactStatusValue(
-      row.contactActivity,
-      row.progressStatus,
-    );
+    const currentStatus = resolveContactStatusValue(row.contactActivity);
     if (currentStatus === nextStatus) return;
 
     const previousActivity = row.contactActivity;
@@ -447,63 +483,118 @@ export function LeadsManager({
         </div>
       )}
 
-      <section className="rounded-md border border-slate-200 bg-white px-4 py-3 shadow-sm">
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-            <div className="shrink-0">
-              <h3 className="text-sm font-semibold text-slate-950">リード一覧</h3>
-              <p className="mt-0.5 text-xs text-slate-500">
-                {pagination.totalCount === 0
-                  ? "0件を表示"
-                  : `${pagination.totalCount}件中 ${pageStart}-${pageEnd}件を表示`}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                className={`inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-semibold ${
-                  inputPanel === "create"
-                    ? "border border-emerald-700 bg-emerald-700 text-white shadow-sm"
-                    : "border border-emerald-200 bg-white text-emerald-800 shadow-sm hover:bg-emerald-50"
-                }`}
-                onClick={() =>
-                  setInputPanel((current) =>
-                    current === "create" ? null : "create",
-                  )
+      <section className="rounded-md border border-slate-300 bg-white shadow-sm">
+        <div className="flex flex-col gap-2 border-b border-slate-300 bg-slate-50 p-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex h-9 w-36 flex-none items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2 text-sm shadow-sm">
+              <span className="text-slate-500">所在地:</span>
+              <select
+                className="h-7 min-w-0 flex-1 truncate border-0 bg-transparent text-sm font-semibold text-slate-900 outline-none"
+                onChange={(event) =>
+                  updateFilter("location", event.currentTarget.value)
                 }
-                type="button"
+                value={filters.location}
               >
-                + Add Lead
-              </button>
-              <button
-                className={`inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-semibold ${
-                  inputPanel === "import"
-                    ? "border border-slate-800 bg-slate-800 text-white shadow-sm"
-                    : "border border-slate-200 bg-white text-slate-800 shadow-sm hover:bg-slate-50"
-                }`}
-                onClick={() =>
-                  setInputPanel((current) =>
-                    current === "import" ? null : "import",
-                  )
+                <option value="all">すべて</option>
+                {locationOptions.map((location) => (
+                  <option key={location} value={location}>
+                    {location}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex h-9 w-32 flex-none items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2 text-sm shadow-sm">
+              <span className="text-slate-500">判定:</span>
+              <select
+                className="h-7 min-w-0 flex-1 border-0 bg-transparent text-sm font-semibold text-slate-900 outline-none"
+                onChange={(event) =>
+                  updateFilter("qualify", event.currentTarget.value)
                 }
-                type="button"
+                value={filters.qualify}
               >
-                Import Excel
-              </button>
-              <button
-                className="inline-flex h-8 items-center justify-center rounded-md border border-emerald-700 bg-emerald-700 px-3 text-xs font-semibold text-white shadow-sm hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-emerald-300 disabled:bg-emerald-300"
-                disabled={isWorking || isEnriching || missingContactRows.length === 0}
-                onClick={() => void enrichMissingContacts()}
-                type="button"
+                <option value="all">すべて</option>
+                <option value="unconfirmed">未確認</option>
+                <option value="qualified">有望</option>
+                <option value="passed">見送り</option>
+              </select>
+            </label>
+            <label className="flex h-9 w-32 flex-none items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2 text-sm shadow-sm">
+              <span className="text-slate-500">進捗:</span>
+              <select
+                className="h-7 min-w-0 flex-1 border-0 bg-transparent text-sm font-semibold text-slate-900 outline-none"
+                onChange={(event) =>
+                  updateFilter("progress", event.currentTarget.value)
+                }
+                value={filters.progress}
               >
-                {isEnriching
-                  ? `連絡先検索中… ${enrichProgress?.done ?? 0}/${enrichProgress?.total ?? 0}`
-                  : `連絡先を一括検索（未設定 ${missingContactRows.length}社）`}
-              </button>
-            </div>
+                <option value="not_contacted">未連絡</option>
+                <option value="email">メール済み</option>
+                <option value="phone">電話済み</option>
+                <option value="reply">返信あり</option>
+              </select>
+            </label>
+            <label className="flex h-9 w-64 flex-none items-center gap-2 rounded-md border border-slate-300 bg-white px-2 text-sm shadow-sm">
+              <span className="text-slate-400">Search</span>
+              <input
+                className="h-7 min-w-0 flex-1 border-0 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
+                onChange={(event) => setQuery(event.currentTarget.value)}
+                placeholder="company or domain..."
+                type="search"
+                value={query}
+              />
+            </label>
+            <label className="flex h-9 w-40 flex-none items-center rounded-md border border-slate-300 bg-white px-2 text-sm font-semibold text-slate-900 shadow-sm">
+              <select
+                aria-label="Quick Presets"
+                className="h-7 min-w-0 flex-1 border-0 bg-transparent text-sm font-semibold outline-none"
+                onChange={(event) => {
+                  applyQuickPreset(event.currentTarget.value);
+                  event.currentTarget.value = "";
+                }}
+                defaultValue=""
+              >
+                <option value="" disabled>
+                  + Quick Presets
+                </option>
+                <option value="needs_contact">未連絡リード</option>
+                <option value="qualified_uncontacted">有望・未連絡</option>
+                <option value="replied">返信あり</option>
+              </select>
+            </label>
+            <button
+              className={`inline-flex h-9 items-center justify-center rounded-md border px-2.5 text-sm font-semibold shadow-sm ${
+                inputPanel === "import"
+                  ? "border-slate-700 bg-slate-700 text-white"
+                  : "border-sky-300 bg-white text-sky-800 hover:bg-sky-50"
+              }`}
+              onClick={() =>
+                setInputPanel((current) =>
+                  current === "import" ? null : "import",
+                )
+              }
+              type="button"
+            >
+              Import Excel
+            </button>
+            <button
+              className={`inline-flex h-9 items-center justify-center rounded-md border px-2.5 text-sm font-semibold shadow-sm ${
+                inputPanel === "create"
+                  ? "border-blue-700 bg-blue-700 text-white"
+                  : "border-blue-700 bg-blue-600 text-white hover:bg-blue-700"
+              }`}
+              onClick={() =>
+                setInputPanel((current) =>
+                  current === "create" ? null : "create",
+                )
+              }
+              type="button"
+            >
+              + Add Leads
+            </button>
           </div>
 
           {inputPanel ? (
-            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
+            <div className="rounded-md border border-slate-200 bg-white px-3 py-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <h4 className="text-xs font-semibold text-slate-800">
                   {inputPanel === "create" ? "リード追加" : "Excelインポート"}
@@ -532,158 +623,110 @@ export function LeadsManager({
               )}
             </div>
           ) : null}
-
-          <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
-            <label className="flex h-8 w-full items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs sm:w-auto">
-              <span className="shrink-0 font-medium text-slate-600">
-                所在地
-              </span>
-              <select
-                className="h-6 min-w-36 flex-1 border-0 bg-transparent px-0 text-xs text-slate-900 outline-none"
-                onChange={(event) =>
-                  updateFilter("location", event.currentTarget.value)
-                }
-                value={filters.location}
-              >
-                <option value="all">すべて</option>
-                {locationOptions.map((location) => (
-                  <option key={location} value={location}>
-                    {location}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex h-8 w-full items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs sm:w-auto">
-              <span className="shrink-0 font-medium text-slate-600">
-                見込み
-              </span>
-              <select
-                className="h-6 min-w-24 flex-1 border-0 bg-transparent px-0 text-xs text-slate-900 outline-none"
-                onChange={(event) =>
-                  updateFilter("qualify", event.currentTarget.value)
-                }
-                value={filters.qualify}
-              >
-                <option value="unconfirmed">未確認</option>
-                <option value="qualified">見込み</option>
-                <option value="passed">見送り</option>
-              </select>
-            </label>
-            <label className="flex h-8 w-full items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 text-xs sm:w-auto">
-              <span className="shrink-0 font-medium text-slate-600">
-                連絡進捗
-              </span>
-              <select
-                className="h-6 min-w-24 flex-1 border-0 bg-transparent px-0 text-xs text-slate-900 outline-none"
-                onChange={(event) =>
-                  updateFilter("progress", event.currentTarget.value)
-                }
-                value={filters.progress}
-              >
-                <option value="not_contacted">未連絡</option>
-                <option value="email">メール済み</option>
-                <option value="phone">電話済み</option>
-                <option value="reply">返信あり</option>
-              </select>
-            </label>
-          </div>
         </div>
-        {enrichProgress ? (
-          <p className="mt-2 text-right text-xs text-slate-500">
-            進捗 {enrichProgress.done}/{enrichProgress.total} ・ 取得成功{" "}
-            {enrichProgress.found}社
-          </p>
-        ) : null}
+        <div className="flex items-start">
+          <div className="min-w-0 flex-1 overflow-x-auto">
+            <table className="w-full min-w-[620px] border-collapse bg-white text-left">
+              <thead className="bg-slate-100 text-base font-semibold text-slate-950">
+                <tr className="border-b border-slate-300">
+                  <th className="w-12 border-r border-slate-300 px-3 py-3">
+                    <input
+                      aria-label="表示中のリードを選択"
+                      checked={allVisibleSelected}
+                      className="h-5 w-5 rounded border-slate-300"
+                      onChange={toggleVisibleSelection}
+                      type="checkbox"
+                    />
+                  </th>
+                  <th className="w-[50%] border-r border-slate-300 px-4 py-3">
+                    Company
+                  </th>
+                  <th className="w-[18%] border-r border-slate-300 px-4 py-3">
+                    Last Activity
+                  </th>
+                  <th className="w-[26%] min-w-[15rem] px-4 py-3">
+                    Progress &amp; Confidence
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 text-sm text-slate-950">
+                {visibleRows.length === 0 ? (
+                  <tr>
+                    <td
+                      className="px-3 py-10 text-center text-sm text-slate-500"
+                      colSpan={4}
+                    >
+                      {pagination.totalCount === 0
+                        ? "リードがありません。上のフォームかExcelから追加してください。"
+                        : query
+                          ? "検索条件に一致するリードがありません。"
+                        : "選択した条件に一致するリードがありません。"}
+                    </td>
+                  </tr>
+                ) : null}
+                {visibleRows.map((row) => {
+                  const isSelected = row.leadId === selectedRow?.leadId;
 
-        <div className="mt-4 overflow-x-auto rounded-md border border-slate-200">
-          <table className="w-full min-w-[1040px] border-collapse bg-white text-left text-xs">
-            <thead className="sticky top-0 z-10 bg-emerald-800 text-[11px] font-semibold uppercase tracking-normal text-white">
-              <tr className="border-b border-emerald-900">
-                <th className="w-[22%] px-3 py-2">Company</th>
-                <th className="w-[13%] px-3 py-2">URL</th>
-                <th className="w-[9%] px-3 py-2">Confirm</th>
-                <th className="whitespace-nowrap px-2 py-2">連絡進捗</th>
-                <th className="w-[20%] px-3 py-2">Email</th>
-                <th className="w-[12%] px-3 py-2">Phone</th>
-                <th className="w-[9%] px-3 py-2">Location</th>
-                <th className="w-[8%] px-3 py-2">Last Activity</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {displayRows.length === 0 ? (
-                <tr>
-                  <td
-                    className="px-3 py-8 text-center text-sm text-slate-500"
-                    colSpan={8}
-                  >
-                    {pagination.totalCount === 0
-                      ? "リードがありません。上のフォームかExcelから追加してください。"
-                      : "選択した条件に一致するリードがありません。"}
-                  </td>
-                </tr>
-              ) : null}
-              {displayRows.map((row, index) => (
-                <tr
-                  className={`align-middle transition-colors hover:bg-blue-50/60 ${
-                    index % 2 === 0 ? "bg-white" : "bg-slate-50"
-                  }`}
-                  key={row.leadId}
-                >
-                  <td className="px-3 py-2">
-                    <Link
-                      className="block max-w-[18rem] truncate font-medium text-slate-950 hover:text-blue-700 hover:underline"
-                      href={`/companies/${row.companyId}`}
-                      title={row.companyName || "未命名の会社"}
+                  return (
+                    <tr
+                      className={`h-[68px] align-middle transition-colors hover:bg-blue-50/60 ${
+                        isSelected ? "bg-blue-50" : "bg-white"
+                      }`}
+                      key={row.leadId}
                     >
-                      {row.companyName || "未命名の会社"}
-                    </Link>
-                  </td>
-                  <td className="px-3 py-2">
-                    <WebsiteLink url={row.websiteUrl} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <QualifyMarkButton
-                      disabled={isWorking}
-                      onToggle={() => void toggleQualifyMark(row)}
-                      status={row.status}
-                    />
-                  </td>
-                  <td className="whitespace-nowrap px-2 py-2">
-                    <ContactStatusSelect
-                      activity={row.contactActivity}
-                      disabled={isWorking || workingStatusLeadId !== null}
-                      isWorking={workingStatusLeadId === row.leadId}
-                      onChange={(nextStatus) =>
-                        void updateContactStatus(row, nextStatus)
-                      }
-                      progressStatus={row.progressStatus}
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <ContactEmail email={row.email} />
-                  </td>
-                  <td className="px-3 py-2 text-slate-700">
-                    {row.phone || <EmptyValue />}
-                  </td>
-                  <td className="px-3 py-2">
-                    <LocationText row={row} />
-                  </td>
-                  <td className="px-3 py-2 text-[11px] text-slate-500">
-                    <span
-                      className="block max-w-[9rem] truncate"
-                      title={row.progressAtLabel}
-                    >
-                      {row.progressAtLabel}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      <td className="border-r border-slate-300 px-3 py-2">
+                        <input
+                          aria-label={`${row.companyName || "未命名の会社"}を選択`}
+                          checked={selectedLeadIds.has(row.leadId)}
+                          className="h-4 w-4 rounded border-slate-300"
+                          onChange={() => toggleLeadSelection(row.leadId)}
+                          type="checkbox"
+                        />
+                      </td>
+                      <td className="border-r border-slate-300 px-3 py-2">
+                        <div className="min-w-0">
+                          <button
+                            className="block max-w-[18rem] truncate text-left text-sm font-semibold leading-5 text-slate-950 hover:text-blue-700 hover:underline"
+                            onClick={() => selectLead(row)}
+                            title={row.companyName || "未命名の会社"}
+                            type="button"
+                          >
+                            {row.companyName || "未命名の会社"}
+                          </button>
+                          <CompanyMetaLines row={row} />
+                        </div>
+                      </td>
+                      <td className="border-r border-slate-300 px-3 py-2 text-sm">
+                        <span
+                          className="whitespace-nowrap"
+                          title={row.progressAtLabel}
+                        >
+                          {row.lastActivityDateLabel}
+                        </span>
+                      </td>
+                      <td className="min-w-[15rem] px-3 py-2 text-center">
+                        <LeadProgressCell
+                          disabled={isWorking || workingStatusLeadId !== null}
+                          isWorking={workingStatusLeadId === row.leadId}
+                          onContactChange={(nextStatus) =>
+                            void updateContactStatus(row, nextStatus)
+                          }
+                          onQualifyToggle={() => void toggleQualifyMark(row)}
+                          row={row}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <CompanyDetailPanel key={selectedRow?.leadId ?? "empty"} row={selectedRow} />
         </div>
         {pagination.totalPages > 1 ? (
-          <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs text-slate-500">
+          <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-3 py-2 text-xs text-slate-500">
             <span>
+              {pagination.totalCount}件中 {pageStart}-{pageEnd}件 ・{" "}
               {pagination.page} / {pagination.totalPages} ページ
             </span>
             <div className="flex gap-2">
@@ -711,54 +754,566 @@ export function LeadsManager({
   );
 }
 
-function WebsiteLink({ url }: { url: string }) {
-  if (!url) {
-    return <EmptyValue />;
+function CompanyDetailPanel({ row }: { row: LeadManageRow | null }) {
+  const router = useRouter();
+  const [isEditing, setIsEditing] = useState(false);
+  const [form, setForm] = useState<DetailPanelFormState | null>(
+    row ? rowToDetailForm(row) : null,
+  );
+  const [isSaving, setIsSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  if (!row) {
+    return (
+      <aside
+        className={`min-w-0 ${detailPanelClassName}`}
+        style={detailPanelStyle}
+      >
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-950">Company detail</p>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            会社名を選択すると、必要な情報だけをここに表示します。
+          </p>
+        </div>
+      </aside>
+    );
   }
 
-  const label = getWebsiteLabel(url);
+  const currentRow = row;
+  const qualifyLabel = qualifyMarkLabel(resolveQualifyMark(row.status));
+  const contactStatus = resolveContactStatusValue(row.contactActivity);
+  const memo = row.researchSummary || row.description;
+  const location = [formatIndustryJa(row.industry), row.location]
+    .filter(Boolean)
+    .join(" / ");
+
+  function updateForm<K extends keyof DetailPanelFormState>(
+    key: K,
+    value: DetailPanelFormState[K],
+  ) {
+    setForm((current) => (current ? { ...current, [key]: value } : current));
+  }
+
+  async function savePanel(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!form || isSaving) return;
+
+    setIsSaving(true);
+    setErrorMessage(null);
+    setSuccessMessage(null);
+
+    try {
+      const leadResponse = await fetch(`/api/leads/${currentRow.leadId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          companyName: form.companyName,
+          websiteUrl: form.websiteUrl,
+          contactName: form.contactName,
+          contactTitle: form.contactTitle,
+          email: form.email,
+          phone: form.phone,
+          industry: form.industry,
+          location: form.location,
+          address: form.address,
+          status: currentRow.status,
+          priority: currentRow.priority,
+          notes: currentRow.notes,
+        }),
+      });
+      const leadPayload = await leadResponse.json();
+
+      if (!leadResponse.ok) {
+        throw new Error(
+          leadPayload?.error?.message ?? "リード情報を保存できませんでした。",
+        );
+      }
+
+      const companyResponse = await fetch(`/api/companies/${currentRow.companyId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: form.companyName,
+          websiteUrl: form.websiteUrl,
+          industry: form.industry,
+          location: form.location,
+          address: form.address,
+          primaryEmail: form.email,
+          contactFormUrl: form.contactFormUrl,
+          description: form.description,
+        }),
+      });
+      const companyPayload = await companyResponse.json();
+
+      if (!companyResponse.ok) {
+        throw new Error(
+          companyPayload?.error?.message ?? "会社情報を保存できませんでした。",
+        );
+      }
+
+      if (form.researchSummary.trim() || currentRow.researchSummary) {
+        const researchResponse = await fetch("/api/company-research", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            companyId: currentRow.companyId,
+            summary: form.researchSummary,
+          }),
+        });
+        const researchPayload = await researchResponse.json();
+
+        if (!researchResponse.ok) {
+          throw new Error(
+            researchPayload?.error?.message ?? "メモを保存できませんでした。",
+          );
+        }
+      }
+
+      setIsEditing(false);
+      setSuccessMessage("保存しました。");
+      router.refresh();
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "保存できませんでした。",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  if (isEditing && form) {
+    return (
+      <aside
+        className={`min-w-0 ${detailPanelClassName}`}
+        style={detailPanelStyle}
+      >
+        <form className="min-w-0 space-y-4" onSubmit={savePanel}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Edit company
+              </p>
+              <h3 className="mt-1 break-words text-lg font-bold text-slate-950">
+                {row.companyName || "未命名の会社"}
+              </h3>
+            </div>
+            <button
+              className="inline-flex h-8 items-center rounded-md border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+              disabled={isSaving}
+              onClick={() => {
+                setForm(rowToDetailForm(row));
+                setIsEditing(false);
+                setErrorMessage(null);
+              }}
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
+
+          <div className="space-y-3">
+            <PanelField
+              label="Company"
+              onChange={(value) => updateForm("companyName", value)}
+              required
+              value={form.companyName}
+            />
+            <PanelField
+              label="Website"
+              onChange={(value) => updateForm("websiteUrl", value)}
+              value={form.websiteUrl}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <PanelField
+                label="Industry"
+                onChange={(value) => updateForm("industry", value)}
+                value={form.industry}
+              />
+              <PanelField
+                label="Location"
+                onChange={(value) => updateForm("location", value)}
+                value={form.location}
+              />
+            </div>
+            <PanelField
+              label="Address"
+              onChange={(value) => updateForm("address", value)}
+              value={form.address}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <PanelField
+                label="Contact name"
+                onChange={(value) => updateForm("contactName", value)}
+                value={form.contactName}
+              />
+              <PanelField
+                label="Title"
+                onChange={(value) => updateForm("contactTitle", value)}
+                value={form.contactTitle}
+              />
+            </div>
+            <PanelField
+              label="Email"
+              onChange={(value) => updateForm("email", value)}
+              type="email"
+              value={form.email}
+            />
+            <PanelField
+              label="Phone"
+              onChange={(value) => updateForm("phone", value)}
+              value={form.phone}
+            />
+            <PanelField
+              label="Contact form"
+              onChange={(value) => updateForm("contactFormUrl", value)}
+              value={form.contactFormUrl}
+            />
+            <PanelTextArea
+              label="Memo"
+              onChange={(value) => updateForm("researchSummary", value)}
+              value={form.researchSummary}
+            />
+          </div>
+
+          <button
+            className="inline-flex h-9 w-full items-center justify-center rounded-md bg-emerald-700 px-3 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            disabled={isSaving}
+            type="submit"
+          >
+            {isSaving ? "Saving..." : "Save"}
+          </button>
+          {errorMessage ? (
+            <p className="text-xs leading-5 text-rose-700">{errorMessage}</p>
+          ) : null}
+        </form>
+      </aside>
+    );
+  }
+
+  return (
+    <aside
+      className={`min-w-0 ${detailPanelClassName}`}
+      style={detailPanelStyle}
+    >
+      <div className="min-w-0 space-y-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Selected company
+            </p>
+            <h3 className="mt-1 break-words text-xl font-bold leading-7 text-slate-950">
+              {row.companyName || "未命名の会社"}
+            </h3>
+            {location ? (
+              <p className="mt-1 break-words text-sm text-slate-600">
+                {location}
+              </p>
+            ) : null}
+          </div>
+          <button
+            className="inline-flex h-8 items-center rounded-md border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            onClick={() => setIsEditing(true)}
+            type="button"
+          >
+            Edit
+          </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <span className="inline-flex h-7 items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 text-xs font-semibold text-emerald-800">
+            {qualifyLabel}
+          </span>
+          <span className="inline-flex h-7 items-center rounded-md border border-amber-200 bg-amber-50 px-2 text-xs font-semibold text-amber-800">
+            {contactStatusLabel(contactStatus)}
+          </span>
+        </div>
+
+        <dl className="min-w-0 space-y-3 text-sm">
+          <DetailItem label="Website">
+            {row.websiteUrl ? (
+              <a
+                className="break-all text-blue-700 hover:text-blue-800 hover:underline"
+                href={row.websiteUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {getWebsiteLabel(row.websiteUrl)}
+              </a>
+            ) : (
+              <EmptyValue />
+            )}
+          </DetailItem>
+          <DetailItem label="Contact">
+            <div className="space-y-1">
+              {row.contactName || row.contactTitle ? (
+                <p>
+                  {[row.contactName, row.contactTitle].filter(Boolean).join(" / ")}
+                </p>
+              ) : null}
+              {row.email ? (
+                <a
+                  className="block break-all text-blue-700 hover:text-blue-800 hover:underline"
+                  href={`mailto:${row.email}`}
+                >
+                  {row.email}
+                </a>
+              ) : null}
+              {row.phone ? (
+                <a
+                  className="block text-blue-700 hover:text-blue-800 hover:underline"
+                  href={`tel:${row.phone}`}
+                >
+                  {row.phone}
+                </a>
+              ) : null}
+              {row.contactFormUrl ? (
+                <a
+                  className="block break-all text-blue-700 hover:text-blue-800 hover:underline"
+                  href={row.contactFormUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  お問い合わせフォーム
+                </a>
+              ) : null}
+              {!row.email && !row.phone && !row.contactFormUrl ? (
+                <EmptyValue />
+              ) : null}
+            </div>
+          </DetailItem>
+          <DetailItem label="Address">
+            <span className="break-words">
+              {row.address || row.location || <EmptyValue />}
+            </span>
+          </DetailItem>
+          <DetailItem label="Last activity">{row.progressAtLabel}</DetailItem>
+          <DetailItem label="Memo">
+            {memo ? (
+              <p className="max-h-40 overflow-y-auto whitespace-pre-line break-words leading-6 text-slate-700">
+                {memo}
+              </p>
+            ) : (
+              <span className="text-slate-400">調査メモはまだありません。</span>
+            )}
+          </DetailItem>
+        </dl>
+
+        {successMessage ? (
+          <p className="text-xs font-medium text-emerald-700">{successMessage}</p>
+        ) : null}
+      </div>
+    </aside>
+  );
+}
+
+function DetailItem({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </dt>
+      <dd className="mt-1 text-sm text-slate-900">{children}</dd>
+    </div>
+  );
+}
+
+function PanelField({
+  label,
+  value,
+  onChange,
+  required,
+  type = "text",
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  required?: boolean;
+  type?: string;
+}) {
+  return (
+    <label className="block text-sm">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </span>
+      <input
+        className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2.5 text-sm text-slate-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+        onChange={(event) => onChange(event.currentTarget.value)}
+        required={required}
+        type={type}
+        value={value}
+      />
+    </label>
+  );
+}
+
+function PanelTextArea({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block text-sm">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </span>
+      <textarea
+        className="mt-1 min-h-24 w-full rounded-md border border-slate-300 bg-white px-2.5 py-2 text-sm leading-5 text-slate-900 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+        onChange={(event) => onChange(event.currentTarget.value)}
+        value={value}
+      />
+    </label>
+  );
+}
+
+function CompanyMetaLines({ row }: { row: LeadManageRow }) {
+  const location = row.location || row.address;
+  const primaryContact = row.email
+    ? {
+        href: `mailto:${row.email}`,
+        icon: "mail" as const,
+        label: row.email,
+        tone: "link" as const,
+      }
+    : row.contactFormUrl
+      ? {
+          href: row.contactFormUrl,
+          icon: "link" as const,
+          label: "お問い合わせフォーム",
+          tone: "link" as const,
+        }
+      : {
+          href: "",
+          icon: "mail" as const,
+          label: "連絡先未設定",
+          tone: "missing" as const,
+        };
+
+  return (
+    <div className="mt-0.5 min-w-0 space-y-0.5">
+      <MetaLine
+        href={primaryContact.href}
+        icon={primaryContact.icon}
+        label={primaryContact.label}
+        tone={primaryContact.tone}
+      />
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+        {row.phone ? (
+          <MetaLine
+            compact
+            href={`tel:${row.phone}`}
+            icon="phone"
+            label={row.phone}
+            tone="muted"
+          />
+        ) : null}
+        {location ? (
+          <MetaLine compact icon="pin" label={location} tone="muted" />
+        ) : null}
+        {!row.phone && !location ? (
+          <MetaLine compact icon="phone" label="電話・所在地未設定" tone="missing" />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function MetaLine({
+  compact = false,
+  href = "",
+  icon,
+  label,
+  tone,
+}: {
+  compact?: boolean;
+  href?: string;
+  icon: CompanyMetaIconName;
+  label: string;
+  tone: "link" | "muted" | "missing";
+}) {
+  const toneClass =
+    tone === "link"
+      ? "text-blue-700 hover:text-blue-800"
+      : tone === "missing"
+        ? "text-amber-700"
+        : "text-slate-600";
+  const className = `inline-flex min-w-0 max-w-full items-center gap-1.5 ${
+    compact ? "text-xs" : "text-sm"
+  } ${toneClass}`;
+  const content = (
+    <>
+      <CompanyMetaIcon name={icon} />
+      <span className="truncate">{label}</span>
+    </>
+  );
+
+  if (!href) {
+    return (
+      <span className={className} title={label}>
+        {content}
+      </span>
+    );
+  }
 
   return (
     <a
-      className="block max-w-[11rem] truncate text-[11px] font-medium text-blue-600 hover:text-blue-800 hover:underline"
-      href={url}
-      rel="noreferrer"
-      target="_blank"
-      title={url}
+      className={`${className} hover:text-blue-700 hover:underline`}
+      href={href}
+      rel={href.startsWith("http") ? "noreferrer" : undefined}
+      target={href.startsWith("http") ? "_blank" : undefined}
+      title={label}
     >
-      {label}
+      {content}
     </a>
   );
 }
 
-function ContactEmail({ email }: { email: string }) {
-  if (!email) {
-    return <EmptyValue />;
-  }
+type CompanyMetaIconName = "mail" | "link" | "phone" | "pin";
 
+function CompanyMetaIcon({ name }: { name: CompanyMetaIconName }) {
   return (
-    <a
-      className="block max-w-[15rem] truncate text-slate-700 hover:text-blue-700 hover:underline"
-      href={`mailto:${email}`}
-      title={email}
+    <svg
+      aria-hidden="true"
+      className="h-3.5 w-3.5 shrink-0 text-current"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
     >
-      {email}
-    </a>
-  );
-}
-
-function LocationText({ row }: { row: LeadManageRow }) {
-  const label = row.location || row.address;
-  const title = [row.location, row.address].filter(Boolean).join(" / ");
-
-  if (!label) {
-    return <EmptyValue />;
-  }
-
-  return (
-    <span className="block max-w-[10rem] truncate text-slate-700" title={title}>
-      {label}
-    </span>
+      {name === "mail" ? (
+        <>
+          <rect height="16" rx="2" width="20" x="2" y="4" />
+          <path d="m22 7-10 6L2 7" />
+        </>
+      ) : null}
+      {name === "link" ? (
+        <>
+          <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93" />
+          <path d="M14 11a5 5 0 0 0-7.07 0L4.81 13.12a5 5 0 0 0 7.07 7.07L13 19.07" />
+        </>
+      ) : null}
+      {name === "phone" ? (
+        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.35 1.9.66 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.31 1.85.53 2.81.66A2 2 0 0 1 22 16.92Z" />
+      ) : null}
+      {name === "pin" ? (
+        <>
+          <path d="M20 10c0 4.5-8 12-8 12S4 14.5 4 10a8 8 0 1 1 16 0Z" />
+          <circle cx="12" cy="10" r="3" />
+        </>
+      ) : null}
+    </svg>
   );
 }
 
@@ -776,13 +1331,12 @@ function EmptyValue() {
 
 type ContactStatusValue =
   | "not_contacted"
-  | "contacted"
   | "email"
   | "phone"
   | "reply";
 
 const CONTACT_STATUS_OPTIONS: Array<{
-  value: Exclude<ContactStatusValue, "contacted">;
+  value: ContactStatusValue;
   label: string;
 }> = [
   { value: "not_contacted", label: "未連絡" },
@@ -796,24 +1350,18 @@ function ContactStatusSelect({
   disabled,
   isWorking,
   onChange,
-  progressStatus,
 }: {
   activity: LeadContactActivitySummary;
   disabled?: boolean;
   isWorking?: boolean;
   onChange: (nextStatus: ContactStatusValue) => void;
-  progressStatus: string;
 }) {
-  const value = resolveContactStatusValue(activity, progressStatus);
-  const options =
-    value === "contacted"
-      ? [{ value: "contacted" as const, label: "連絡済み" }, ...CONTACT_STATUS_OPTIONS]
-      : CONTACT_STATUS_OPTIONS;
+  const value = resolveContactStatusValue(activity);
 
   return (
     <select
       aria-label="連絡進捗"
-      className={`h-6 min-w-[6.75rem] cursor-pointer rounded-full border px-2 text-[11px] font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60 ${contactStatusToneClass(
+      className={`h-9 w-28 cursor-pointer rounded-lg border px-2 text-center text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60 ${contactStatusToneClass(
         value,
       )}`}
       disabled={disabled}
@@ -823,7 +1371,7 @@ function ContactStatusSelect({
       title="連絡進捗を記録"
       value={value}
     >
-      {options.map((option) => (
+      {CONTACT_STATUS_OPTIONS.map((option) => (
         <option key={option.value} value={option.value}>
           {isWorking && option.value === value ? "更新中…" : option.label}
         </option>
@@ -832,16 +1380,42 @@ function ContactStatusSelect({
   );
 }
 
+function LeadProgressCell({
+  row,
+  disabled,
+  isWorking,
+  onContactChange,
+  onQualifyToggle,
+}: {
+  row: LeadManageRow;
+  disabled?: boolean;
+  isWorking?: boolean;
+  onContactChange: (nextStatus: ContactStatusValue) => void;
+  onQualifyToggle: () => void;
+}) {
+  return (
+    <div className="grid min-w-[14.5rem] grid-cols-2 justify-center gap-2">
+      <QualifyMarkButton
+        disabled={disabled}
+        onToggle={onQualifyToggle}
+        status={row.status}
+      />
+      <ContactStatusSelect
+        activity={row.contactActivity}
+        disabled={disabled}
+        isWorking={isWorking}
+        onChange={onContactChange}
+      />
+    </div>
+  );
+}
+
 function resolveContactStatusValue(
   activity: LeadContactActivitySummary,
-  progressStatus?: string,
 ): ContactStatusValue {
   if (activity.hasEmailReply) return "reply";
   if (activity.hasEmailContact) return "email";
   if (activity.hasPhoneContact) return "phone";
-  if (["CONTACTED", "FOLLOW_UP"].includes(progressStatus?.toUpperCase() ?? "")) {
-    return "contacted";
-  }
   return "not_contacted";
 }
 
@@ -863,16 +1437,21 @@ function progressLabelForContactStatus(status: ContactStatusValue) {
   if (status === "email") return `メール ${stamp}`;
   if (status === "phone") return `架電 ${stamp}`;
   if (status === "reply") return `返信 ${stamp}`;
-  if (status === "contacted") return `連絡済み ${stamp}`;
   return stamp;
 }
 
 function contactStatusToneClass(status: ContactStatusValue) {
-  if (status === "reply") return "border-emerald-200 bg-emerald-50 text-emerald-800";
-  if (status === "email") return "border-sky-200 bg-sky-50 text-sky-800";
-  if (status === "phone") return "border-indigo-200 bg-indigo-50 text-indigo-800";
-  if (status === "contacted") return "border-blue-200 bg-blue-50 text-blue-800";
-  return "border-amber-200 bg-amber-50 text-amber-800";
+  if (status === "reply") return "border-[#6EE7B7] bg-[#D1FAE5] text-[#065F46]";
+  if (status === "email") return "border-[#93C5FD] bg-[#DBEAFE] text-[#1D4ED8]";
+  if (status === "phone") return "border-[#A5B4FC] bg-[#E0E7FF] text-[#3730A3]";
+  return "border-[#FCD34D] bg-[#FEF3C7] text-[#92400E]";
+}
+
+function contactStatusLabel(status: ContactStatusValue) {
+  if (status === "reply") return "返信あり";
+  if (status === "email") return "メール済み";
+  if (status === "phone") return "電話済み";
+  return "未連絡";
 }
 
 function QualifyMarkButton({
@@ -885,21 +1464,21 @@ function QualifyMarkButton({
   onToggle: () => void;
 }) {
   const kind = resolveQualifyMark(status);
-  const label = qualifyMarkLabel(kind);
+  const label = kind === "qualified" ? "有望" : qualifyMarkLabel(kind);
 
   const toneClass =
     kind === "qualified"
-      ? "border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+      ? "border-[#86EFAC] bg-[#DCFCE7] text-[#166534] hover:bg-[#DCFCE7]"
       : kind === "passed"
-        ? "border-rose-300 bg-rose-50 text-rose-700 hover:bg-rose-100"
-        : "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100";
+        ? "border-[#D1D5DB] bg-[#E5E7EB] text-[#374151] hover:bg-[#E5E7EB]"
+        : "border-[#CBD5E1] bg-[#F1F5F9] text-[#475569] hover:bg-[#F1F5F9]";
 
   return (
     <button
-      className={`inline-flex h-5 shrink-0 items-center rounded border px-1.5 text-[10px] font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${toneClass}`}
+      className={`inline-flex h-9 w-28 shrink-0 items-center justify-center rounded-lg border px-2 text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${toneClass}`}
       disabled={disabled}
       onClick={onToggle}
-      title="クリックで 未確認 → 見込み → 見送り を切替"
+      title="クリックで 未確認 → 有望 → 見送り を切替"
       type="button"
     >
       {label}

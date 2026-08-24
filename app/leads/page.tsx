@@ -36,7 +36,11 @@ export default async function LeadsPage({ searchParams }: LeadsPageProps) {
   const params = (await searchParams) ?? {};
   const filters = {
     location: getStringParam(params.location) || "all",
-    qualify: getEnumParam(params.qualify, QUALIFY_FILTERS, "qualified") as QualifyFilterGroup,
+    qualify: getEnumParam(
+      params.qualify,
+      QUALIFY_FILTERS,
+      "qualified",
+    ) as QualifyFilterGroup,
     progress: getEnumParam(
       params.progress,
       PROGRESS_FILTERS,
@@ -82,12 +86,13 @@ export default async function LeadsPage({ searchParams }: LeadsPageProps) {
         industry: row.company.industry ?? "",
         location: row.company.location ?? "",
         address: row.company.address ?? "",
+        description: row.company.description ?? "",
+        researchSummary: row.company.research[0]?.summary ?? "",
         contactName: row.contact?.name ?? "",
         contactTitle: row.contact?.title ?? "",
         email,
         phone: row.contact?.phone ?? "",
         contactFormUrl,
-        hasOutreachChannel: Boolean(email || contactFormUrl),
         status: lead.status,
         progressStatus,
         priority: lead.priority,
@@ -98,6 +103,7 @@ export default async function LeadsPage({ searchParams }: LeadsPageProps) {
           hasEmailReply: contactActivity.hasEmailReply,
         },
         progressAtLabel,
+        lastActivityDateLabel: formatDateSlash(progressAt),
       };
     });
 
@@ -134,4 +140,11 @@ function parsePositiveInteger(value: string | undefined, fallback: number) {
     return fallback;
   }
   return parsed;
+}
+
+function formatDateSlash(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}/${month}/${day}`;
 }

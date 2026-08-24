@@ -339,9 +339,9 @@ export default function LeadSearchPage() {
             <div className="flex flex-wrap gap-2">
               <Link
                 className="inline-flex h-9 items-center rounded-md bg-emerald-700 px-3 text-xs font-semibold text-white hover:bg-emerald-800"
-                href={`/companies/${saveReview.companyId}`}
+                href={`/leads?company=${saveReview.companyId}`}
               >
-                Review company
+                Review in CRM
               </Link>
               <Link
                 className="inline-flex h-9 items-center rounded-md border border-emerald-200 bg-white px-3 text-xs font-semibold text-emerald-800 hover:bg-emerald-50"

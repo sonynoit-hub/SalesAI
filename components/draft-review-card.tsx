@@ -71,7 +71,7 @@ export function DraftReviewCard({
     if (isSent) return "この下書きは送信済みです。再送する場合は新しい下書きを作成してください。";
     if (isDiscarded) return "この下書きは破棄済みです。送信するには下書きを再作成してください。";
     if (!isApproved) return "送信するには先に「承認」が必要です。";
-    if (!hasRecipient) return "宛先メールが未設定です。会社詳細で担当者を設定してください。";
+    if (!hasRecipient) return "宛先メールが未設定です。リードCRMの側面パネルで担当者を設定してください。";
     if (!hasProvider) return "利用可能な送信方法がありません。設定画面でメール連携してください。";
     return null;
   }
