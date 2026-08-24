@@ -53,6 +53,34 @@ type ProdRow = {
   contact: ContactStatus;
 };
 
+type SerializedProdRow = {
+  leadId?: unknown;
+  companyName?: unknown;
+  websiteUrl?: unknown;
+  industry?: unknown;
+  location?: unknown;
+  address?: unknown;
+  contactName?: unknown;
+  contactTitle?: unknown;
+  email?: unknown;
+  phone?: unknown;
+  status?: unknown;
+  priority?: unknown;
+  notes?: unknown;
+  contactActivity?: {
+    hasEmailContact?: unknown;
+    hasPhoneContact?: unknown;
+    hasEmailReply?: unknown;
+  };
+};
+
+type SerializedPagination = {
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
+};
+
 function domainOf(url: string, normalized?: string | null) {
   if (normalized) return normalized.toLowerCase();
   const website = normalizeCompanyWebsiteUrl(url || "") || url || "";
@@ -95,11 +123,7 @@ function qualifyFromStatus(status: string): QualifyKind {
 }
 
 function unescapeRsc(html: string) {
-  let text = html;
-  for (let i = 0; i < 2; i += 1) {
-    text = text.replace(/\\"/g, '"');
-  }
-  return text;
+  return html.replace(/\\"/g, '"');
 }
 
 async function loadLocalRows(): Promise<LocalRow[]> {
@@ -133,8 +157,54 @@ async function loadLocalRows(): Promise<LocalRow[]> {
 function parseProdRows(html: string): ProdRow[] {
   const text = unescapeRsc(html);
   const rows: ProdRow[] = [];
+  const seen = new Set<string>();
+
+  for (const serializedRows of extractRowsArrays(text)) {
+    let parsed: SerializedProdRow[];
+    try {
+      parsed = JSON.parse(serializedRows) as SerializedProdRow[];
+    } catch {
+      continue;
+    }
+
+    for (const row of parsed) {
+      const leadId = stringValue(row.leadId);
+      if (!leadId || seen.has(leadId)) continue;
+      seen.add(leadId);
+
+      const websiteUrl = stringValue(row.websiteUrl);
+      const status = stringValue(row.status);
+      const activity = row.contactActivity ?? {};
+
+      rows.push({
+        leadId,
+        companyName: stringValue(row.companyName),
+        websiteUrl,
+        domain: domainOf(websiteUrl),
+        industry: stringValue(row.industry),
+        location: stringValue(row.location),
+        address: stringValue(row.address),
+        contactName: stringValue(row.contactName),
+        contactTitle: stringValue(row.contactTitle),
+        email: stringValue(row.email),
+        phone: stringValue(row.phone),
+        status,
+        priority: stringValue(row.priority),
+        notes: stringValue(row.notes),
+        qualify: qualifyFromStatus(status),
+        contact: contactStatusFromActivity({
+          hasEmailContact: activity.hasEmailContact === true,
+          hasPhoneContact: activity.hasPhoneContact === true,
+          hasEmailReply: activity.hasEmailReply === true,
+        }),
+      });
+    }
+  }
+
+  if (rows.length > 0) return rows;
+
   const re =
-    /"leadId":"([0-9a-f-]+)","companyId":"[0-9a-f-]+","companyName":"([^"]*)","websiteUrl":"([^"]*)","industry":"([^"]*)","location":"([^"]*)","address":"([^"]*)","contactName":"([^"]*)","contactTitle":"([^"]*)","email":"([^"]*)","phone":"([^"]*)","contactFormUrl":"[^"]*","hasOutreachChannel":(?:true|false),"status":"([A-Z_]+)","progressStatus":"[A-Z_]+","priority":"([A-Z]+)","notes":"([\s\S]*?)","contactActivity":\{"hasEmailContact":(true|false),"hasPhoneContact":(true|false),"hasEmailReply":(true|false)\}/g;
+    /"leadId":"([0-9a-f-]+)","companyId":"[0-9a-f-]+","companyName":"((?:\\.|[^"\\])*)","websiteUrl":"((?:\\.|[^"\\])*)","industry":"((?:\\.|[^"\\])*)","location":"((?:\\.|[^"\\])*)","address":"((?:\\.|[^"\\])*)","description":"(?:\\.|[^"\\])*","researchSummary":"(?:\\.|[^"\\])*","contactName":"((?:\\.|[^"\\])*)","contactTitle":"((?:\\.|[^"\\])*)","email":"((?:\\.|[^"\\])*)","phone":"((?:\\.|[^"\\])*)","contactFormUrl":"(?:\\.|[^"\\])*","status":"([A-Z_]+)","progressStatus":"[A-Z_]+","priority":"([A-Z]+)","notes":"((?:\\.|[^"\\])*)","contactActivity":\{"hasEmailContact":(true|false),"hasPhoneContact":(true|false),"hasEmailReply":(true|false)\}/g;
 
   for (const match of text.matchAll(re)) {
     const hasEmailContact = match[14] === "true";
@@ -167,6 +237,70 @@ function parseProdRows(html: string): ProdRow[] {
   return rows;
 }
 
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function extractRowsArrays(text: string) {
+  const arrays: string[] = [];
+  let searchIndex = 0;
+  const token = '"rows":';
+
+  while (searchIndex < text.length) {
+    const tokenIndex = text.indexOf(token, searchIndex);
+    if (tokenIndex === -1) break;
+
+    const arrayStart = tokenIndex + token.length;
+    if (text[arrayStart] !== "[") {
+      searchIndex = tokenIndex + token.length;
+      continue;
+    }
+
+    const arrayEnd = findJsonArrayEnd(text, arrayStart);
+    if (arrayEnd === -1) {
+      searchIndex = arrayStart + 1;
+      continue;
+    }
+
+    arrays.push(text.slice(arrayStart, arrayEnd + 1));
+    searchIndex = arrayEnd + 1;
+  }
+
+  return arrays;
+}
+
+function findJsonArrayEnd(text: string, start: number) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+    } else if (char === "[") {
+      depth += 1;
+    } else if (char === "]") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+
+  return -1;
+}
+
 async function loadProdRows(): Promise<ProdRow[]> {
   const seen = new Set<string>();
   const rows: ProdRow[] = [];
@@ -190,10 +324,7 @@ async function loadProdRowsForProgress(
       cache: "no-store",
     })
   ).text();
-  const total = Number(
-    firstHtml.replace(/<[^>]+>/g, " ").match(/(\d+)件中/)?.[1] || 0,
-  );
-  const pages = Math.max(1, Math.ceil(total / 50));
+  const pages = getPageCount(firstHtml);
 
   for (let page = 1; page <= pages; page += 1) {
     const url = page === 1 ? firstUrl : `${firstUrl}&page=${page}`;
@@ -212,6 +343,50 @@ async function loadProdRowsForProgress(
       rows.push(row);
     }
   }
+}
+
+function getPageCount(html: string) {
+  const serialized = getSerializedPagination(html);
+  if (serialized) return Math.max(1, serialized.totalPages);
+
+  const total = Number(
+    html.replace(/<[^>]+>/g, " ").match(/(\d+)件中/)?.[1] || 0,
+  );
+  return Math.max(1, Math.ceil(total / 50));
+}
+
+function getSerializedPagination(html: string): SerializedPagination | null {
+  const match = unescapeRsc(html).match(
+    /"pagination":\{"page":(\d+),"pageSize":(\d+),"totalCount":(\d+),"totalPages":(\d+)\}/,
+  );
+  if (!match) return null;
+
+  return {
+    page: Number(match[1]),
+    pageSize: Number(match[2]),
+    totalCount: Number(match[3]),
+    totalPages: Number(match[4]),
+  };
+}
+
+function formatPaginationLabel(html: string) {
+  const pagination = getSerializedPagination(html);
+  if (pagination) {
+    const start =
+      pagination.totalCount === 0
+        ? 0
+        : (pagination.page - 1) * pagination.pageSize + 1;
+    const end = Math.min(
+      pagination.page * pagination.pageSize,
+      pagination.totalCount,
+    );
+    return `${pagination.totalCount}件中 ${start}-${end}件`;
+  }
+
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .match(/\d+件中[^。]{0,40}|0件を表示/)?.[0];
 }
 
 async function patchQualify(prod: ProdRow, nextStatus: string) {
@@ -327,10 +502,7 @@ async function main() {
         cache: "no-store",
       })
     ).text();
-    const label = verify
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .match(/\d+件中[^。]{0,40}|0件を表示/)?.[0];
+    const label = formatPaginationLabel(verify);
     console.log("verify 見込み+未連絡:", label);
   }
 }
